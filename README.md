@@ -19,9 +19,24 @@ Use `desktop_launcher.sample.json` as a template:
 {
   "desktops": [
     {
-      "name": "GNOME",
-      "command": "dbus-launch gnome-session",
-      "description": "Default GNOME Shell session"
+      "name": "Sway",
+      "command": "sway --unsupported-gpu",
+      "description": "Wayland tiling compositor (forces unsupported GPU mode)"
+    },
+    {
+      "name": "Hyprland",
+      "command": "Hyprland",
+      "description": "Dynamic tiling Wayland compositor"
+    },
+    {
+      "name": "GNOME (Wayland Shell)",
+      "command": "env GNOME_SESSION_DISABLE_USER_SYSTEMD=1 XDG_SESSION_TYPE=wayland dbus-run-session -- gnome-shell --wayland",
+      "description": "Launch GNOME Shell directly on Wayland (minimal session)"
+    },
+    {
+      "name": "GNOME (Xorg)",
+      "command": "startx /usr/bin/gnome-session -- :1 vt$XDG_VTNR",
+      "description": "Run full GNOME session on a dedicated Xorg server"
     },
     {
       "name": "Xfce",
