@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+"""
+desktop - curses-based desktop environment launcher
+
+This script provides a terminal user interface that lists configured desktop
+environments and launches the selected one. The configuration lives in a single
+JSON file that can be shared system-wide (default: /etc/desktop_launcher.json).
+
+Each desktop entry in the configuration must provide a display name and the
+command required to start that desktop environment.
+"""
+
+from __future__ import annotations
+
+import argparse
+import curses
+import json
+import os
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable, List, Optional
+
+
+DEFAULT_CONFIG_PATH = Path("/etc/desktop_launcher.json")
+ENV_CONFIG_KEY = "DESKTOP_LAUNCHER_CONFIG"
+
+
+class ConfigError(RuntimeError):
+    """Raised when the configuration file is missing or invalid."""
+
+
+@dataclass(frozen=True)
+class DesktopEntry:
+    """In-memory representation of a desktop environment option."""
+
+    name: str
+    command: str
+    description: Optional[str] = None
+
+
+def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Terminal desktop environment launcher.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "-c",
+        "--config",
+        type=Path,
+        help=(
+            "Path to launcher config. Overrides DESKTOP_LAUNCHER_CONFIG and "
+            f"the default ({DEFAULT_CONFIG_PATH})."
+        ),
+    )
+    parser.add_argument(
+        "--show-config-path",
+        action="store_true",
+        help="Print the resolved configuration path and exit.",
+    )
+    return parser.parse_args(argv)
+
+
+def resolve_config_path(args: argparse.Namespace) -> Path:
+    if args.config:
+        return args.config
+    env_path = os.environ.get(ENV_CONFIG_KEY)
+    if env_path:
+        return Path(env_path).expanduser()
+    return DEFAULT_CONFIG_PATH
+
+
+def load_config(path: Path) -> List[DesktopEntry]:
+    try:
+        raw_text = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise ConfigError(
+            f"Config file not found: {path}. Create it or point to an existing "
+            "file with --config."
+        ) from exc
+    try:
+        parsed = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        raise ConfigError(f"Config file {path} is not valid JSON: {exc}") from exc
+
+    try:
+        desktops = parsed["desktops"]
+    except (KeyError, TypeError) as exc:
+        raise ConfigError(
+            f"Config file {path} must contain a top-level 'desktops' array."
+        ) from exc
+
+    if not isinstance(desktops, list) or not desktops:
+        raise ConfigError(
+            f"'desktops' in {path} must be a non-empty list of desktop entries."
+        )
+
+    entries: List[DesktopEntry] = []
+    seen_names = set()
+    for idx, item in enumerate(desktops, start=1):
+        if not isinstance(item, dict):
+            raise ConfigError(
+                f"Entry #{idx} in {path} is not an object. Each desktop must "
+                "define 'name' and 'command'."
+            )
+        name = item.get("name")
+        command = item.get("command")
+        description = item.get("description")
+
+        if not isinstance(name, str) or not name.strip():
+            raise ConfigError(
+                f"Entry #{idx} in {path} has an invalid 'name'. It must be a "
+                "non-empty string."
+            )
+        if name in seen_names:
+            raise ConfigError(f"Duplicate desktop name '{name}' in {path}.")
+        if not isinstance(command, str) or not command.strip():
+            raise ConfigError(
+                f"Entry '{name}' in {path} has an invalid 'command'. It must be "
+                "a non-empty string."
+            )
+        if description is not None and not isinstance(description, str):
+            raise ConfigError(
+                f"Entry '{name}' in {path} has an invalid 'description'. "
+                "Descriptions must be strings when provided."
+            )
+
+        entries.append(
+            DesktopEntry(name=name.strip(), command=command.strip(), description=description)
+        )
+        seen_names.add(name)
+
+    return entries
+
+
+def format_help_lines(config_path: Path) -> List[str]:
+    return [
+        "↑/k: up    ↓/j: down    ↵: launch    q: quit",
+        f"Config: {config_path}",
+    ]
+
+
+def curses_main(stdscr: "curses._CursesWindow", desktops: List[DesktopEntry], config_path: Path) -> Optional[DesktopEntry]:
+    curses.curs_set(0)
+    stdscr.nodelay(False)
+    stdscr.keypad(True)
+
+    selected = 0
+    top = 0
+    data = desktops
+
+    while True:
+        stdscr.erase()
+        height, width = stdscr.getmaxyx()
+
+        title = "Desktop Launcher"
+        subtitle = "Select a desktop environment to start"
+
+        stdscr.addstr(0, 0, title[: width], curses.A_BOLD)
+        stdscr.addstr(1, 0, subtitle[: width])
+
+        help_lines = format_help_lines(config_path)
+        for i, line in enumerate(help_lines, start=height - len(help_lines)):
+            if 0 <= i < height:
+                stdscr.addstr(i, 0, line[: width], curses.A_DIM)
+
+        list_start = 3
+        list_height = max(0, height - list_start - len(help_lines))
+
+        if list_height <= 0:
+            stdscr.addstr(
+                list_start,
+                0,
+                "Terminal window is too small to render the launcher.",
+                curses.A_BOLD,
+            )
+            stdscr.refresh()
+            key = stdscr.getch()
+            if key in (ord("q"), ord("Q"), 27):
+                return None
+            continue
+
+        if selected < top:
+            top = selected
+        elif selected >= top + list_height:
+            top = selected - list_height + 1
+
+        visible_entries = data[top : top + list_height]
+        for idx, entry in enumerate(visible_entries):
+            row = list_start + idx
+            line = entry.name
+            if entry.description:
+                suffix = f" — {entry.description}"
+                available = max(0, width - len(line) - 1)
+                line = f"{line} {suffix[:available]}"
+
+            if top + idx == selected:
+                stdscr.attron(curses.A_REVERSE)
+                stdscr.addstr(row, 0, line[: width])
+                stdscr.attroff(curses.A_REVERSE)
+            else:
+                stdscr.addstr(row, 0, line[: width])
+
+        stdscr.refresh()
+        key = stdscr.getch()
+
+        if key in (curses.KEY_UP, ord("k"), ord("K")):
+            selected = (selected - 1) % len(data)
+        elif key in (curses.KEY_DOWN, ord("j"), ord("J")):
+            selected = (selected + 1) % len(data)
+        elif key in (curses.KEY_ENTER, 10, 13):
+            return data[selected]
+        elif key in (ord("q"), ord("Q"), 27):
+            return None
+
+
+def exec_command(command: str) -> None:
+    shell = os.environ.get("SHELL", "/bin/sh")
+    shell_name = Path(shell).name
+    try:
+        os.execlp(shell, shell_name, "-c", command)
+    except FileNotFoundError:
+        os.execlp("/bin/sh", "sh", "-c", command)
+
+
+def main(argv: Optional[Iterable[str]] = None) -> int:
+    args = parse_args(argv)
+    config_path = resolve_config_path(args)
+
+    if args.show_config_path:
+        print(config_path)
+        return 0
+
+    try:
+        desktops = load_config(config_path)
+    except ConfigError as error:
+        print(f"desktop: {error}", file=sys.stderr)
+        return 1
+
+    if not desktops:
+        print(f"desktop: No desktops configured in {config_path}", file=sys.stderr)
+        return 1
+
+    try:
+        selection = curses.wrapper(curses_main, desktops, config_path)
+    except curses.error as error:
+        print(f"desktop: Failed to initialize curses UI: {error}", file=sys.stderr)
+        return 1
+
+    if selection is None:
+        return 0
+
+    print(f"Launching '{selection.name}' using: {selection.command}")
+    exec_command(selection.command)
+    return 0  # Unreachable, exec replaces process
+
+
+if __name__ == "__main__":
+    sys.exit(main())

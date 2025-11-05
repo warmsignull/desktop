@@ -1,0 +1,24 @@
+{
+  "desktops": [
+    {
+      "name": "Sway",
+      "command": "sway --unsupported-gpu",
+      "description": "Wayland tiling compositor (forces unsupported GPU mode)"
+    },
+    {
+      "name": "Hyprland",
+      "command": "Hyprland",
+      "description": "Dynamic tiling Wayland compositor"
+    },
+    {
+      "name": "GNOME (Wayland)",
+      "command": "dbus-run-session gnome-session --session=gnome",
+      "description": "GNOME Shell running on Wayland"
+    },
+    {
+      "name": "Xfce",
+      "command": "startxfce4",
+      "description": "Lightweight Xfce desktop"
+    }
+  ]
+}
