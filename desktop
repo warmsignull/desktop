@@ -19,11 +19,19 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Set
 
 
 DEFAULT_CONFIG_PATH = Path("/etc/desktop_launcher.json")
 ENV_CONFIG_KEY = "DESKTOP_LAUNCHER_CONFIG"
+DEFAULT_FAVORITES_PATH = Path.home() / ".config/desktop_launcher/favorites.json"
+FAVORITES_ENV_KEY = "DESKTOP_LAUNCHER_FAVORITES"
+FILTER_SEQUENCE = ("all", "x11", "wayland")
+FILTER_LABELS = {
+    "all": "All sessions",
+    "x11": "X11 only",
+    "wayland": "Wayland only",
+}
 
 
 class ConfigError(RuntimeError):
@@ -36,6 +44,7 @@ class DesktopEntry:
 
     name: str
     command: str
+    session_type: str
     description: Optional[str] = None
 
 
@@ -106,6 +115,7 @@ def load_config(path: Path) -> List[DesktopEntry]:
         name = item.get("name")
         command = item.get("command")
         description = item.get("description")
+        session_type = item.get("session_type")
 
         if not isinstance(name, str) or not name.strip():
             raise ConfigError(
@@ -125,31 +135,165 @@ def load_config(path: Path) -> List[DesktopEntry]:
                 "Descriptions must be strings when provided."
             )
 
+        normalized_session_type = normalize_session_type(session_type, command, name, path)
+
         entries.append(
-            DesktopEntry(name=name.strip(), command=command.strip(), description=description)
+            DesktopEntry(
+                name=name.strip(),
+                command=command.strip(),
+                session_type=normalized_session_type,
+                description=description,
+            )
         )
         seen_names.add(name)
 
     return entries
 
 
-def format_help_lines(config_path: Path) -> List[str]:
+def normalize_session_type(
+    explicit_value: Optional[str],
+    command: str,
+    entry_name: str,
+    config_path: Path,
+) -> str:
+    if explicit_value is not None:
+        if not isinstance(explicit_value, str):
+            raise ConfigError(
+                f"Entry '{entry_name}' in {config_path} has an invalid 'session_type'. "
+                "It must be a string with value 'wayland' or 'x11'."
+            )
+        normalized = explicit_value.strip().lower()
+        if normalized in {"xorg", "x"}:
+            normalized = "x11"
+        if normalized not in {"x11", "wayland"}:
+            raise ConfigError(
+                f"Entry '{entry_name}' in {config_path} has unsupported session_type "
+                f"'{explicit_value}'. Use 'x11' or 'wayland'."
+            )
+        return normalized
+
+    inferred = infer_session_type(command)
+    if inferred is None:
+        raise ConfigError(
+            f"Entry '{entry_name}' in {config_path} is missing 'session_type' and the "
+            "value could not be inferred from its command. Add session_type explicitly."
+        )
+    return inferred
+
+
+def infer_session_type(command: str) -> Optional[str]:
+    lowered = command.lower()
+    if "startx" in lowered or "xinit" in lowered or "xorg" in lowered:
+        return "x11"
+    if "wayland" in lowered or "startplasma-wayland" in lowered:
+        return "wayland"
+    if "enlightenment_start" in lowered and "wayland" not in lowered:
+        # Enlightenment defaults to X11 unless wayland explicitly requested
+        return "x11"
+    return None
+
+
+def cycle_filter_mode(current: str) -> str:
+    try:
+        index = FILTER_SEQUENCE.index(current)
+    except ValueError:
+        return FILTER_SEQUENCE[0]
+    return FILTER_SEQUENCE[(index + 1) % len(FILTER_SEQUENCE)]
+
+
+def filter_desktops(desktops: List[DesktopEntry], filter_mode: str) -> List[DesktopEntry]:
+    if filter_mode == "all":
+        return desktops
+    return [entry for entry in desktops if entry.session_type == filter_mode]
+
+
+def build_display_rows(
+    desktops: List[DesktopEntry],
+    favourites: Set[str],
+    filter_mode: str,
+) -> tuple[List[dict], List[DesktopEntry], List[int]]:
+    filtered = filter_desktops(desktops, filter_mode)
+    favourite_entries = [entry for entry in filtered if entry.name in favourites]
+
+    sections = [
+        ("Favourites", favourite_entries),
+        ("All Desktops", filtered),
+    ]
+
+    display_rows: List[dict] = []
+    flat_entries: List[DesktopEntry] = []
+    selectable_indices: List[int] = []
+
+    for header, entries in sections:
+        display_rows.append({"type": "header", "label": header})
+        if entries:
+            for entry in entries:
+                display_rows.append({"type": "entry", "entry": entry})
+                selectable_indices.append(len(display_rows) - 1)
+                flat_entries.append(entry)
+        else:
+            display_rows.append({"type": "info", "label": "  (none)"})
+
+    if not flat_entries:
+        display_rows.append(
+            {"type": "info", "label": "No desktops match the current filter."}
+        )
+
+    return display_rows, flat_entries, selectable_indices
+
+
+def find_entry_index(entries: List[DesktopEntry], name: str) -> Optional[int]:
+    for idx, entry in enumerate(entries):
+        if entry.name == name:
+            return idx
+    return None
+
+
+def format_help_lines(config_path: Path, filter_mode: str) -> List[str]:
+    filter_label = FILTER_LABELS.get(filter_mode, filter_mode.title())
     return [
-        "↑/k: up    ↓/j: down    ↵: launch    q: quit",
+        "↑/k: up    ↓/j: down    ↵: launch    f: favourite    s: filter    q: quit",
+        f"Filter: {filter_label}",
+        "Legend: * favourite    [WAYLAND|X11] session type",
         f"Config: {config_path}",
     ]
 
 
-def curses_main(stdscr: "curses._CursesWindow", desktops: List[DesktopEntry], config_path: Path) -> Optional[DesktopEntry]:
+def curses_main(
+    stdscr: "curses._CursesWindow",
+    desktops: List[DesktopEntry],
+    config_path: Path,
+    favourites: Set[str],
+) -> Optional[DesktopEntry]:
     curses.curs_set(0)
     stdscr.nodelay(False)
     stdscr.keypad(True)
 
-    selected = 0
-    top = 0
-    data = desktops
+    selected_idx = 0
+    top_row = 0
+    filter_mode = "all"
+    selection_anchor_name: Optional[str] = None
 
     while True:
+        (
+            display_rows,
+            flat_entries,
+            selectable_indices,
+        ) = build_display_rows(desktops, favourites, filter_mode)
+
+        if selection_anchor_name and flat_entries:
+            anchored_idx = find_entry_index(flat_entries, selection_anchor_name)
+            if anchored_idx is not None:
+                selected_idx = anchored_idx
+            selection_anchor_name = None
+
+        if flat_entries:
+            selected_idx = max(0, min(selected_idx, len(flat_entries) - 1))
+            selected_row_index = selectable_indices[selected_idx]
+        else:
+            selected_idx = 0
+            selected_row_index = None
+
         stdscr.erase()
         height, width = stdscr.getmaxyx()
 
@@ -159,7 +303,7 @@ def curses_main(stdscr: "curses._CursesWindow", desktops: List[DesktopEntry], co
         stdscr.addstr(0, 0, title[: width], curses.A_BOLD)
         stdscr.addstr(1, 0, subtitle[: width])
 
-        help_lines = format_help_lines(config_path)
+        help_lines = format_help_lines(config_path, filter_mode)
         for i, line in enumerate(help_lines, start=height - len(help_lines)):
             if 0 <= i < height:
                 stdscr.addstr(i, 0, line[: width], curses.A_DIM)
@@ -178,40 +322,147 @@ def curses_main(stdscr: "curses._CursesWindow", desktops: List[DesktopEntry], co
             key = stdscr.getch()
             if key in (ord("q"), ord("Q"), 27):
                 return None
+            if key in (ord("s"), ord("S")):
+                filter_mode = cycle_filter_mode(filter_mode)
+                top_row = 0
             continue
 
-        if selected < top:
-            top = selected
-        elif selected >= top + list_height:
-            top = selected - list_height + 1
+        total_rows = len(display_rows)
+        if selected_row_index is not None:
+            if selected_row_index < top_row:
+                top_row = selected_row_index
+            elif selected_row_index >= top_row + list_height:
+                top_row = selected_row_index - list_height + 1
 
-        visible_entries = data[top : top + list_height]
-        for idx, entry in enumerate(visible_entries):
-            row = list_start + idx
-            line = entry.name
-            if entry.description:
-                suffix = f" — {entry.description}"
-                available = max(0, width - len(line) - 1)
-                line = f"{line} {suffix[:available]}"
+        max_top = max(0, total_rows - list_height)
+        if top_row > max_top:
+            top_row = max_top
+        if top_row < 0:
+            top_row = 0
 
-            if top + idx == selected:
-                stdscr.attron(curses.A_REVERSE)
-                stdscr.addstr(row, 0, line[: width])
-                stdscr.attroff(curses.A_REVERSE)
+        rows_to_render = display_rows[top_row : top_row + list_height]
+        for idx, row in enumerate(rows_to_render):
+            actual_index = top_row + idx
+            screen_row = list_start + idx
+            row_type = row["type"]
+
+            if row_type == "header":
+                header_text = row["label"]
+                stdscr.addstr(
+                    screen_row,
+                    0,
+                    header_text[: width],
+                    curses.A_BOLD | curses.A_UNDERLINE,
+                )
+            elif row_type == "entry":
+                entry = row["entry"]
+                fav_mark = "*" if entry.name in favourites else " "
+                session_label = entry.session_type.upper()
+                line = f"{fav_mark} {entry.name} [{session_label}]"
+                if entry.description:
+                    suffix = f" — {entry.description}"
+                    available = max(0, width - len(line) - 1)
+                    line = f"{line} {suffix[:available]}"
+
+                if selected_row_index is not None and actual_index == selected_row_index:
+                    stdscr.attron(curses.A_REVERSE)
+                    stdscr.addstr(screen_row, 0, line[: width])
+                    stdscr.attroff(curses.A_REVERSE)
+                else:
+                    stdscr.addstr(screen_row, 0, line[: width])
             else:
-                stdscr.addstr(row, 0, line[: width])
+                info_text = row["label"]
+                stdscr.addstr(screen_row, 0, info_text[: width], curses.A_DIM)
 
         stdscr.refresh()
         key = stdscr.getch()
 
-        if key in (curses.KEY_UP, ord("k"), ord("K")):
-            selected = (selected - 1) % len(data)
-        elif key in (curses.KEY_DOWN, ord("j"), ord("J")):
-            selected = (selected + 1) % len(data)
-        elif key in (curses.KEY_ENTER, 10, 13):
-            return data[selected]
+        if key in (curses.KEY_UP, ord("k"), ord("K")) and flat_entries:
+            selected_idx = (selected_idx - 1) % len(flat_entries)
+        elif key in (curses.KEY_DOWN, ord("j"), ord("J")) and flat_entries:
+            selected_idx = (selected_idx + 1) % len(flat_entries)
+        elif key in (curses.KEY_ENTER, 10, 13) and flat_entries:
+            return flat_entries[selected_idx]
         elif key in (ord("q"), ord("Q"), 27):
             return None
+        elif key in (ord("f"), ord("F")) and flat_entries:
+            current = flat_entries[selected_idx]
+            if current.name in favourites:
+                favourites.remove(current.name)
+            else:
+                favourites.add(current.name)
+            selection_anchor_name = current.name
+        elif key in (ord("s"), ord("S")):
+            if flat_entries:
+                selection_anchor_name = flat_entries[selected_idx].name
+            filter_mode = cycle_filter_mode(filter_mode)
+            selected_idx = 0
+            top_row = 0
+
+
+def resolve_favourites_path() -> Path:
+    env_path = os.environ.get(FAVORITES_ENV_KEY)
+    if env_path:
+        return Path(env_path).expanduser()
+    return DEFAULT_FAVORITES_PATH
+
+
+def load_favourites(path: Path) -> Set[str]:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return set()
+    except OSError as error:
+        print(
+            f"desktop: Failed to read favourites file {path}: {error}",
+            file=sys.stderr,
+        )
+        return set()
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as error:
+        print(
+            f"desktop: Favourites file {path} is invalid JSON: {error}. Ignoring.",
+            file=sys.stderr,
+        )
+        return set()
+
+    if not isinstance(parsed, list):
+        print(
+            f"desktop: Favourites file {path} must contain a JSON list of desktop names.",
+            file=sys.stderr,
+        )
+        return set()
+
+    favourite_names = set()
+    for item in parsed:
+        if isinstance(item, str) and item.strip():
+            favourite_names.add(item)
+    return favourite_names
+
+
+def save_favourites(path: Path, favourites: Set[str]) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        print(
+            f"desktop: Failed to create directory for favourites file {path}: {error}",
+            file=sys.stderr,
+        )
+        return
+
+    try:
+        path.write_text(json.dumps(sorted(favourites)), encoding="utf-8")
+    except OSError as error:
+        print(
+            f"desktop: Failed to write favourites file {path}: {error}",
+            file=sys.stderr,
+        )
+
+
+def clear_terminal() -> None:
+    os.system("clear")
 
 
 def exec_command(command: str) -> None:
@@ -241,13 +492,26 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         print(f"desktop: No desktops configured in {config_path}", file=sys.stderr)
         return 1
 
+    favourites_path = resolve_favourites_path()
+    initial_favourites = load_favourites(favourites_path)
+    favourites = set(initial_favourites)
+    available_names = {entry.name for entry in desktops}
+    favourites.intersection_update(available_names)
+    initial_filtered_favourites = initial_favourites & available_names
+
     try:
-        selection = curses.wrapper(curses_main, desktops, config_path)
+        selection = curses.wrapper(
+            curses_main, desktops, config_path, favourites
+        )
     except curses.error as error:
         print(f"desktop: Failed to initialize curses UI: {error}", file=sys.stderr)
         return 1
 
+    if favourites != initial_filtered_favourites:
+        save_favourites(favourites_path, favourites)
+
     if selection is None:
+        clear_terminal()
         return 0
 
     print(f"Launching '{selection.name}' using: {selection.command}")

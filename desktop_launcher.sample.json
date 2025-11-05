@@ -3,71 +3,85 @@
     {
       "name": "Sway",
       "command": "sway --unsupported-gpu",
+      "session_type": "wayland",
       "description": "Wayland tiling compositor (forces unsupported GPU mode)"
     },
     {
       "name": "Hyprland",
       "command": "Hyprland",
+      "session_type": "wayland",
       "description": "Dynamic tiling Wayland compositor"
     },
     {
       "name": "GNOME (Wayland Shell)",
       "command": "env GNOME_SESSION_DISABLE_USER_SYSTEMD=1 XDG_SESSION_TYPE=wayland dbus-run-session -- gnome-shell --wayland",
+      "session_type": "wayland",
       "description": "Launch GNOME Shell directly on Wayland (minimal session)"
     },
     {
       "name": "Xfce",
       "command": "startx /usr/bin/startxfce4 -- :1 vt$XDG_VTNR",
+      "session_type": "x11",
       "description": "Launch Xfce in a dedicated Xorg session"
     },
     {
       "name": "MATE",
       "command": "startx /usr/bin/mate-session -- :2 vt$XDG_VTNR",
+      "session_type": "x11",
       "description": "Start the MATE desktop in its own Xorg server"
     },
     {
       "name": "Cinnamon",
       "command": "startx /usr/bin/cinnamon-session -- :3 vt$XDG_VTNR",
+      "session_type": "x11",
       "description": "Start Cinnamon desktop on a separate Xorg display"
     },
     {
       "name": "KDE Plasma (Wayland)",
       "command": "env XDG_SESSION_TYPE=wayland QT_QPA_PLATFORM=wayland dbus-run-session -- startplasma-wayland",
+      "session_type": "wayland",
       "description": "Run KDE Plasma on Wayland via dbus-run-session"
     },
     {
       "name": "Enlightenment (X11)",
       "command": "startx /usr/bin/enlightenment_start -- :9 vt$XDG_VTNR",
+      "session_type": "x11",
       "description": "Start Enlightenment in a dedicated Xorg session"
     },
     {
       "name": "LXQt",
       "command": "startx /usr/bin/startlxqt -- :4 vt$XDG_VTNR",
+      "session_type": "x11",
       "description": "Start LXQt desktop in a dedicated Xorg session"
     },
     {
       "name": "LXDE",
       "command": "startx /usr/bin/startlxde -- :5 vt$XDG_VTNR",
+      "session_type": "x11",
       "description": "Launch LXDE on its own Xorg display"
     },
     {
       "name": "IceWM",
       "command": "startx /usr/bin/icewm-session -- :6 vt$XDG_VTNR",
+      "session_type": "x11",
       "description": "Start IceWM session via startx"
     },
     {
       "name": "Openbox",
       "command": "startx /usr/bin/openbox-session -- :7 vt$XDG_VTNR",
+      "session_type": "x11",
       "description": "Launch Openbox session using startx"
     },
     {
       "name": "labwc",
       "command": "env XDG_SESSION_TYPE=wayland dbus-run-session -- labwc",
+      "session_type": "wayland",
       "description": "Run labwc Wayland compositor under dbus-run-session"
     },
     {
       "name": "i3",
       "command": "startx /usr/bin/i3 -- :8 vt$XDG_VTNR",
+      "session_type": "x11",
       "description": "Start i3 window manager on a dedicated Xorg server"
     }
   ]
