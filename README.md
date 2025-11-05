@@ -25,8 +25,8 @@ Use `desktop_launcher.sample.json` as a template:
     },
     {
       "name": "Xfce",
-      "command": "startxfce4",
-      "description": "Lightweight Xfce desktop"
+      "command": "startx /usr/bin/startxfce4 -- :1 vt$XDG_VTNR",
+      "description": "Launch Xfce in a dedicated Xorg session"
     }
   ]
 }
