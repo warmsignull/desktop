@@ -12,6 +12,13 @@ scrollable list, and replaces itself with the selected desktop command.
    - `name`: Human-readable label shown in the UI.
    - `command`: Command executed to start the desktop environment.
    - `session_type`: Either `x11` or `wayland`, used for the session filter.
+   - `detect_commands` (optional): List of binaries or absolute paths used to
+     determine whether the desktop is installed. If omitted, the launcher
+     infers commands from `command`.
+   - `install_command` (optional): Shell command shown and executed from the
+     Install screen for desktops that are missing.
+   - `install_extras` (optional): Array of extra commands to offer after the
+     main install (each item needs `name`, `command`, optional `description`).
    - `description` (optional): Short blurb displayed next to the name.
 
 Use `desktop_launcher.sample.json` as a template:
@@ -23,89 +30,38 @@ Use `desktop_launcher.sample.json` as a template:
       "name": "Sway",
       "command": "sway --unsupported-gpu",
       "session_type": "wayland",
+      "detect_commands": ["sway"],
+      "install_command": "sudo apt install sway",
+      "install_extras": [
+        {
+          "name": "Waybar",
+          "command": "sudo apt install waybar",
+          "description": "Wayland status bar"
+        }
+      ],
       "description": "Wayland tiling compositor (forces unsupported GPU mode)"
-    },
-    {
-      "name": "Hyprland",
-      "command": "Hyprland",
-      "session_type": "wayland",
-      "description": "Dynamic tiling Wayland compositor"
-    },
-    {
-      "name": "GNOME (Wayland Shell)",
-      "command": "env GNOME_SESSION_DISABLE_USER_SYSTEMD=1 XDG_SESSION_TYPE=wayland dbus-run-session -- gnome-shell --wayland",
-      "session_type": "wayland",
-      "description": "Launch GNOME Shell directly on Wayland (minimal session)"
     },
     {
       "name": "Xfce",
       "command": "startx /usr/bin/startxfce4 -- :1 vt$XDG_VTNR",
       "session_type": "x11",
+      "detect_commands": ["/usr/bin/startxfce4"],
+      "install_command": "sudo apt install xfce4",
+      "install_extras": [
+        {
+          "name": "Xfce Goodies",
+          "command": "sudo apt install xfce4-goodies"
+        }
+      ],
       "description": "Launch Xfce in a dedicated Xorg session"
-    },
-    {
-      "name": "MATE",
-      "command": "startx /usr/bin/mate-session -- :2 vt$XDG_VTNR",
-      "session_type": "x11",
-      "description": "Start the MATE desktop in its own Xorg server"
-    },
-    {
-      "name": "Cinnamon",
-      "command": "startx /usr/bin/cinnamon-session -- :3 vt$XDG_VTNR",
-      "session_type": "x11",
-      "description": "Start Cinnamon desktop on a separate Xorg display"
-    },
-    {
-      "name": "KDE Plasma (Wayland)",
-      "command": "env XDG_SESSION_TYPE=wayland QT_QPA_PLATFORM=wayland dbus-run-session -- startplasma-wayland",
-      "session_type": "wayland",
-      "description": "Run KDE Plasma on Wayland via dbus-run-session"
-    },
-    {
-      "name": "Enlightenment (X11)",
-      "command": "startx /usr/bin/enlightenment_start -- :9 vt$XDG_VTNR",
-      "session_type": "x11",
-      "description": "Start Enlightenment in a dedicated Xorg session"
-    },
-    {
-      "name": "LXQt",
-      "command": "startx /usr/bin/startlxqt -- :4 vt$XDG_VTNR",
-      "session_type": "x11",
-      "description": "Start LXQt desktop in a dedicated Xorg session"
-    },
-    {
-      "name": "LXDE",
-      "command": "startx /usr/bin/startlxde -- :5 vt$XDG_VTNR",
-      "session_type": "x11",
-      "description": "Launch LXDE on its own Xorg display"
-    },
-    {
-      "name": "IceWM",
-      "command": "startx /usr/bin/icewm-session -- :6 vt$XDG_VTNR",
-      "session_type": "x11",
-      "description": "Start IceWM session via startx"
-    },
-    {
-      "name": "Openbox",
-      "command": "startx /usr/bin/openbox-session -- :7 vt$XDG_VTNR",
-      "session_type": "x11",
-      "description": "Launch Openbox session using startx"
-    },
-    {
-      "name": "labwc",
-      "command": "env XDG_SESSION_TYPE=wayland dbus-run-session -- labwc",
-      "session_type": "wayland",
-      "description": "Run labwc Wayland compositor under dbus-run-session"
-    },
-    {
-      "name": "i3",
-      "command": "startx /usr/bin/i3 -- :8 vt$XDG_VTNR",
-      "session_type": "x11",
-      "description": "Start i3 window manager on a dedicated Xorg server"
     }
   ]
 }
 ```
+
+The sample configuration file in this repository includes a larger set with
+pre-populated install commands for reference—tailor these commands to match
+your distribution.
 
 ## Installation
 
@@ -122,14 +78,24 @@ The script also accepts:
 
 ## Usage
 
-Run `desktop` from any terminal. The launcher renders favourites first, followed
-by the full list of desktops. Key bindings:
+Run `desktop` from any terminal. The launcher offers three screens:
+
+1. **Configured** – your curated list from the configuration file (favourites appear first).
+2. **Detect** – highlights which configured desktops look installed based on `detect_commands`.
+3. **Install** – shows desktops that expose an `install_command`, allowing you to run the
+   command for missing environments directly from the launcher.
+
+Key bindings:
 
 - `↑`/`↓` or `k`/`j`: Move the selection.
-- `Enter`: Launch the highlighted desktop.
+- `Enter`: Launch the highlighted desktop (Configured/Detect) or confirm and run the install command, then choose optional extras (Install).
 - `f`: Mark or unmark the selection as a favourite (persisted between runs).
 - `s`: Cycle the session filter (`All → X11 → Wayland`).
+- `d`: Refresh detection results.
+- `1`, `2`, `3`: Jump between the Configured, Detect, and Install screens.
 - `q`: Quit the launcher (the terminal is cleared on exit).
 
-When a desktop is selected the script executes the associated command via the
-user's shell, replacing the launcher process.
+When a desktop is launched the script executes the associated command via the
+user's shell, replacing the launcher process. After an install you can choose
+which optional extras to run; the launcher then prompts you to press Enter,
+refreshes detection results, and returns to the UI.

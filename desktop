@@ -16,10 +16,13 @@ import argparse
 import curses
 import json
 import os
+import shlex
+import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Set
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 
 DEFAULT_CONFIG_PATH = Path("/etc/desktop_launcher.json")
@@ -32,10 +35,25 @@ FILTER_LABELS = {
     "x11": "X11 only",
     "wayland": "Wayland only",
 }
+SCREEN_SEQUENCE = ("configured", "detected", "install")
+SCREEN_LABELS = {
+    "configured": "Configured",
+    "detected": "Detect",
+    "install": "Install",
+}
 
 
 class ConfigError(RuntimeError):
     """Raised when the configuration file is missing or invalid."""
+
+
+@dataclass(frozen=True)
+class InstallExtra:
+    """Represents an optional extra command that can accompany an install."""
+
+    name: str
+    command: str
+    description: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -45,7 +63,18 @@ class DesktopEntry:
     name: str
     command: str
     session_type: str
+    detect_commands: Tuple[str, ...] = ()
+    install_command: Optional[str] = None
+    install_extras: Tuple[InstallExtra, ...] = ()
     description: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class LauncherResult:
+    """Represents the outcome selected in the launcher UI."""
+
+    kind: str  # "launch", "install", "exit"
+    entry: Optional[DesktopEntry] = None
 
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
@@ -116,6 +145,9 @@ def load_config(path: Path) -> List[DesktopEntry]:
         command = item.get("command")
         description = item.get("description")
         session_type = item.get("session_type")
+        raw_detect_commands = item.get("detect_commands")
+        raw_install_command = item.get("install_command")
+        raw_install_extras = item.get("install_extras")
 
         if not isinstance(name, str) or not name.strip():
             raise ConfigError(
@@ -135,6 +167,73 @@ def load_config(path: Path) -> List[DesktopEntry]:
                 "Descriptions must be strings when provided."
             )
 
+        detect_commands: Tuple[str, ...] = ()
+        if raw_detect_commands is not None:
+            if not isinstance(raw_detect_commands, list):
+                raise ConfigError(
+                    f"Entry '{name}' in {path} has invalid 'detect_commands'. "
+                    "It must be a list of command names."
+                )
+            parsed_commands: List[str] = []
+            for cmd_idx, cmd in enumerate(raw_detect_commands, start=1):
+                if not isinstance(cmd, str) or not cmd.strip():
+                    raise ConfigError(
+                        f"Entry '{name}' in {path} has an invalid detect command at "
+                        f"position {cmd_idx}. Detection commands must be non-empty strings."
+                    )
+                parsed_commands.append(cmd.strip())
+            detect_commands = tuple(parsed_commands)
+
+        install_command: Optional[str] = None
+        if raw_install_command is not None:
+            if not isinstance(raw_install_command, str) or not raw_install_command.strip():
+                raise ConfigError(
+                    f"Entry '{name}' in {path} has an invalid 'install_command'. "
+                    "It must be a non-empty string when provided."
+                )
+            install_command = raw_install_command.strip()
+
+        install_extras: Tuple[InstallExtra, ...] = ()
+        if raw_install_extras is not None:
+            if not isinstance(raw_install_extras, list):
+                raise ConfigError(
+                    f"Entry '{name}' in {path} has invalid 'install_extras'. "
+                    "It must be a list of objects with 'name' and 'command'."
+                )
+            extras: List[InstallExtra] = []
+            for extra_idx, extra in enumerate(raw_install_extras, start=1):
+                if not isinstance(extra, dict):
+                    raise ConfigError(
+                        f"Entry '{name}' in {path} has an install extra at position "
+                        f"{extra_idx} that is not an object."
+                    )
+                extra_name = extra.get("name")
+                extra_command = extra.get("command")
+                extra_description = extra.get("description")
+                if not isinstance(extra_name, str) or not extra_name.strip():
+                    raise ConfigError(
+                        f"Entry '{name}' in {path} has an install extra at position "
+                        f"{extra_idx} with an invalid 'name'."
+                    )
+                if not isinstance(extra_command, str) or not extra_command.strip():
+                    raise ConfigError(
+                        f"Entry '{name}' in {path} has an install extra '{extra_name}' "
+                        "with an invalid 'command'. It must be a non-empty string."
+                    )
+                if extra_description is not None and not isinstance(extra_description, str):
+                    raise ConfigError(
+                        f"Install extra '{extra_name}' in entry '{name}' must have a "
+                        "string description when provided."
+                    )
+                extras.append(
+                    InstallExtra(
+                        name=extra_name.strip(),
+                        command=extra_command.strip(),
+                        description=extra_description,
+                    )
+                )
+            install_extras = tuple(extras)
+
         normalized_session_type = normalize_session_type(session_type, command, name, path)
 
         entries.append(
@@ -142,6 +241,9 @@ def load_config(path: Path) -> List[DesktopEntry]:
                 name=name.strip(),
                 command=command.strip(),
                 session_type=normalized_session_type,
+                detect_commands=detect_commands,
+                install_command=install_command,
+                install_extras=install_extras,
                 description=description,
             )
         )
@@ -193,6 +295,85 @@ def infer_session_type(command: str) -> Optional[str]:
     return None
 
 
+def infer_detect_commands(command: str) -> Tuple[str, ...]:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return tuple()
+
+    commands: List[str] = []
+    idx = 0
+    length = len(tokens)
+
+    if idx < length and tokens[idx] == "env":
+        idx += 1
+        while idx < length and "=" in tokens[idx] and not tokens[idx].startswith("/"):
+            idx += 1
+
+    while idx < length and "=" in tokens[idx] and not tokens[idx].startswith("/"):
+        idx += 1
+
+    if idx >= length:
+        return tuple()
+
+    current = tokens[idx]
+    if current != "--":
+        commands.append(current)
+    idx += 1
+
+    # If we encounter '--', assume the actual command follows it.
+    if "--" in tokens[idx:]:
+        dash_index = tokens.index("--", idx) + 1
+        if dash_index < length:
+            commands.append(tokens[dash_index])
+    elif commands and commands[0] in {"dbus-run-session", "systemd-run", "startx"}:
+        if idx < length:
+            commands.append(tokens[idx])
+
+    cleaned: List[str] = []
+    for cmd in commands:
+        if cmd and cmd not in cleaned:
+            cleaned.append(cmd)
+    return tuple(cleaned)
+
+
+def command_exists(command: str) -> bool:
+    if not command:
+        return False
+    command = command.strip()
+    if not command:
+        return False
+    if os.path.isabs(command):
+        return os.access(command, os.X_OK)
+    if "/" in command:
+        path = Path(command)
+        return path.is_file() and os.access(path, os.X_OK)
+    return shutil.which(command) is not None
+
+
+def detection_commands_for(entry: DesktopEntry) -> Tuple[str, ...]:
+    if entry.detect_commands:
+        return entry.detect_commands
+    inferred = infer_detect_commands(entry.command)
+    if inferred:
+        return inferred
+    fallback = entry.command.strip().split()
+    if fallback:
+        return (fallback[0],)
+    return tuple()
+
+
+def detect_desktops(desktops: Sequence[DesktopEntry]) -> Dict[str, bool]:
+    results: Dict[str, bool] = {}
+    for entry in desktops:
+        commands = detection_commands_for(entry)
+        if not commands:
+            results[entry.name] = False
+            continue
+        results[entry.name] = all(command_exists(cmd) for cmd in commands)
+    return results
+
+
 def cycle_filter_mode(current: str) -> str:
     try:
         index = FILTER_SEQUENCE.index(current)
@@ -207,7 +388,7 @@ def filter_desktops(desktops: List[DesktopEntry], filter_mode: str) -> List[Desk
     return [entry for entry in desktops if entry.session_type == filter_mode]
 
 
-def build_display_rows(
+def build_configured_rows(
     desktops: List[DesktopEntry],
     favourites: Set[str],
     filter_mode: str,
@@ -225,18 +406,135 @@ def build_display_rows(
     selectable_indices: List[int] = []
 
     for header, entries in sections:
-        display_rows.append({"type": "header", "label": header})
+        display_rows.append({"type": "header", "text": header})
         if entries:
             for entry in entries:
-                display_rows.append({"type": "entry", "entry": entry})
+                fav_mark = "*" if entry.name in favourites else " "
+                session_label = entry.session_type.upper()
+                line = f"{fav_mark} {entry.name} [{session_label}]"
+                display_rows.append(
+                    {"type": "entry", "entry": entry, "text": line, "attr": curses.A_NORMAL}
+                )
                 selectable_indices.append(len(display_rows) - 1)
                 flat_entries.append(entry)
         else:
-            display_rows.append({"type": "info", "label": "  (none)"})
+            display_rows.append({"type": "info", "text": "  (none)", "attr": curses.A_DIM})
 
     if not flat_entries:
         display_rows.append(
-            {"type": "info", "label": "No desktops match the current filter."}
+            {"type": "info", "text": "No desktops match the current filter.", "attr": curses.A_DIM}
+        )
+
+    return display_rows, flat_entries, selectable_indices
+
+
+def build_detection_rows(
+    desktops: List[DesktopEntry],
+    favourites: Set[str],
+    filter_mode: str,
+    detection_map: Dict[str, bool],
+) -> tuple[List[dict], List[DesktopEntry], List[int]]:
+    filtered = filter_desktops(desktops, filter_mode)
+    installed = [entry for entry in filtered if detection_map.get(entry.name, False)]
+    missing = [entry for entry in filtered if not detection_map.get(entry.name, False)]
+
+    sections = [
+        ("Installed", installed),
+        ("Missing", missing),
+    ]
+
+    display_rows: List[dict] = []
+    flat_entries: List[DesktopEntry] = []
+    selectable_indices: List[int] = []
+
+    for header, entries in sections:
+        display_rows.append({"type": "header", "text": header})
+        if entries:
+            for entry in entries:
+                fav_mark = "*" if entry.name in favourites else " "
+                session_label = entry.session_type.upper()
+                installed_flag = detection_map.get(entry.name, False)
+                status = "[OK]" if installed_flag else "[MISSING]"
+                line = f"{status} {fav_mark} {entry.name} [{session_label}]"
+                attr = curses.A_NORMAL if installed_flag else curses.A_BOLD
+                display_rows.append(
+                    {"type": "entry", "entry": entry, "text": line, "attr": attr}
+                )
+                selectable_indices.append(len(display_rows) - 1)
+                flat_entries.append(entry)
+        else:
+            suffix = "  (none detected)" if header == "Installed" else "  (none missing)"
+            display_rows.append({"type": "info", "text": suffix, "attr": curses.A_DIM})
+
+    if not flat_entries:
+        display_rows.append(
+            {"type": "info", "text": "No desktops match the current filter.", "attr": curses.A_DIM}
+        )
+
+    return display_rows, flat_entries, selectable_indices
+
+
+def build_install_rows(
+    desktops: List[DesktopEntry],
+    favourites: Set[str],
+    filter_mode: str,
+    detection_map: Dict[str, bool],
+) -> tuple[List[dict], List[DesktopEntry], List[int]]:
+    filtered = filter_desktops(desktops, filter_mode)
+    installable = [entry for entry in filtered if entry.install_command]
+
+    missing = [entry for entry in installable if not detection_map.get(entry.name, False)]
+    already = [entry for entry in installable if detection_map.get(entry.name, False)]
+    no_install_data = [entry for entry in filtered if not entry.install_command]
+
+    display_rows: List[dict] = []
+    flat_entries: List[DesktopEntry] = []
+    selectable_indices: List[int] = []
+
+    display_rows.append({"type": "header", "text": "Ready to Install"})
+    if missing:
+        for entry in missing:
+            fav_mark = "*" if entry.name in favourites else " "
+            session_label = entry.session_type.upper()
+            extras_flag = " +extras" if entry.install_extras else ""
+            line = f"[INSTALL] {fav_mark} {entry.name} [{session_label}]{extras_flag}"
+            display_rows.append(
+                {"type": "entry", "entry": entry, "text": line, "attr": curses.A_BOLD}
+            )
+            selectable_indices.append(len(display_rows) - 1)
+            flat_entries.append(entry)
+    else:
+        display_rows.append({"type": "info", "text": "  (nothing to install)", "attr": curses.A_DIM})
+
+    display_rows.append({"type": "header", "text": "Already Installed"})
+    if already:
+        for entry in already:
+            fav_mark = "*" if entry.name in favourites else " "
+            session_label = entry.session_type.upper()
+            extras_flag = " +extras" if entry.install_extras else ""
+            line = f"[OK] {fav_mark} {entry.name} [{session_label}]{extras_flag}"
+            display_rows.append(
+                {"type": "entry", "entry": entry, "text": line, "attr": curses.A_NORMAL}
+            )
+            selectable_indices.append(len(display_rows) - 1)
+            flat_entries.append(entry)
+    else:
+        display_rows.append({"type": "info", "text": "  (none)", "attr": curses.A_DIM})
+
+    if no_install_data:
+        display_rows.append({"type": "header", "text": "Not Installable"})
+        for entry in no_install_data:
+            session_label = entry.session_type.upper()
+            line = f"[SKIP] {entry.name} [{session_label}] (missing install_command)"
+            display_rows.append({"type": "info", "text": line, "attr": curses.A_DIM})
+
+    if not flat_entries:
+        display_rows.append(
+            {
+                "type": "info",
+                "text": "No installable desktops match the current filter.",
+                "attr": curses.A_DIM,
+            }
         )
 
     return display_rows, flat_entries, selectable_indices
@@ -249,14 +547,135 @@ def find_entry_index(entries: List[DesktopEntry], name: str) -> Optional[int]:
     return None
 
 
-def format_help_lines(config_path: Path, filter_mode: str) -> List[str]:
+def format_screen_nav(active_screen: str) -> str:
+    parts: List[str] = []
+    for screen in SCREEN_SEQUENCE:
+        label = SCREEN_LABELS.get(screen, screen.title())
+        if screen == active_screen:
+            parts.append(f"[{label}]")
+        else:
+            parts.append(label)
+    return "Screens: " + "    ".join(parts)
+
+
+def format_help_lines(
+    config_path: Path,
+    filter_mode: str,
+    active_screen: str,
+    install_command: Optional[str] = None,
+) -> List[str]:
     filter_label = FILTER_LABELS.get(filter_mode, filter_mode.title())
-    return [
-        "↑/k: up    ↓/j: down    ↵: launch    f: favourite    s: filter    q: quit",
-        f"Filter: {filter_label}",
-        "Legend: * favourite    [WAYLAND|X11] session type",
-        f"Config: {config_path}",
+    lines = [
+        "↑/k: up    ↓/j: down    f: favourite    s: filter    q: quit    1/2/3: switch screen",
+        f"Filter: {filter_label}    Legend: * favourite    [WAYLAND|X11] session type",
     ]
+    if active_screen == "detected":
+        lines.append("Enter: launch selected desktop    d: refresh detection status")
+    elif active_screen == "install":
+        lines.append(
+            "Enter: confirm install, then choose optional extras    d: refresh detection status"
+        )
+        if install_command:
+            lines.append(f"Install command: {install_command}")
+    else:
+        lines.append("Enter: launch selected desktop")
+    lines.append(f"Config: {config_path}")
+    return lines
+
+
+def prompt_install_confirmation(
+    stdscr: "curses._CursesWindow", entry: DesktopEntry
+) -> bool:
+    confirm_lines = [
+        f"Install '{entry.name}'?",
+        f"Command: {entry.install_command}",
+        "Run install command? (y/n)",
+    ]
+    height, width = stdscr.getmaxyx()
+    start_row = max(0, height - len(confirm_lines) - 2)
+
+    for offset, text in enumerate(confirm_lines):
+        line = text if text else ""
+        stdscr.addstr(start_row + offset, 0, " " * width)
+        attr = curses.A_BOLD if offset == 0 else curses.A_NORMAL
+        stdscr.addstr(start_row + offset, 0, line[:width], attr)
+    stdscr.refresh()
+
+    while True:
+        key = stdscr.getch()
+        if key in (ord("y"), ord("Y")):
+            return True
+        if key in (ord("n"), ord("N"), 27):
+            return False
+
+
+def prompt_optional_extras(entry: DesktopEntry) -> List[InstallExtra]:
+    extras = list(entry.install_extras)
+    if not extras:
+        return []
+
+    print("Optional extras available:")
+    for idx, extra in enumerate(extras, start=1):
+        summary = f"{idx}. {extra.name}"
+        if extra.description:
+            summary = f"{summary} — {extra.description}"
+        print(summary)
+        print(f"   Command: {extra.command}")
+
+    while True:
+        response = input(
+            "Select extras to install (comma separated numbers, 'all' for all, blank for none): "
+        ).strip()
+        if not response:
+            return []
+        if response.lower() == "all":
+            return extras
+        selected: List[InstallExtra] = []
+        tokens = [token.strip() for token in response.split(",") if token.strip()]
+        invalid = False
+        for token in tokens:
+            if not token.isdigit():
+                print(f"Invalid selection '{token}'. Enter numbers or 'all'.")
+                invalid = True
+                break
+            index = int(token)
+            if index < 1 or index > len(extras):
+                print(f"Selection {index} is out of range.")
+                invalid = True
+                break
+            selected_extra = extras[index - 1]
+            if selected_extra not in selected:
+                selected.append(selected_extra)
+        if not invalid:
+            return selected
+
+
+def run_shell_command(command: str) -> int:
+    print(f"Running command:\n  {command}\n")
+    try:
+        return subprocess.call(command, shell=True)
+    except OSError as error:
+        print(f"desktop: Failed to start command '{command}': {error}", file=sys.stderr)
+        return -1
+
+
+def perform_install(entry: DesktopEntry) -> None:
+    clear_terminal()
+    print(f"Ready to install '{entry.name}'.")
+    selected_extras = prompt_optional_extras(entry)
+
+    if entry.install_command:
+        exit_code = run_shell_command(entry.install_command)
+        print(f"Install command exited with code {exit_code}.")
+    else:
+        print("No primary install command configured.")
+
+    for extra in selected_extras:
+        print(f"\nInstalling optional extra '{extra.name}'...")
+        exit_code = run_shell_command(extra.command)
+        print(f"Extra '{extra.name}' command exited with code {exit_code}.")
+
+    input("\nPress Enter to return to the launcher...")
 
 
 def curses_main(
@@ -264,28 +683,48 @@ def curses_main(
     desktops: List[DesktopEntry],
     config_path: Path,
     favourites: Set[str],
-) -> Optional[DesktopEntry]:
-    curses.curs_set(0)
+    detection_map: Dict[str, bool],
+) -> LauncherResult:
+    try:
+        curses.curs_set(0)
+    except curses.error:
+        pass
     stdscr.nodelay(False)
     stdscr.keypad(True)
 
-    selected_idx = 0
-    top_row = 0
+    screen_state: Dict[str, Dict[str, object]] = {
+        screen: {"selected_idx": 0, "top_row": 0, "anchor_name": None, "retain_offset": None}
+        for screen in SCREEN_SEQUENCE
+    }
+    active_screen = "configured"
     filter_mode = "all"
-    selection_anchor_name: Optional[str] = None
 
     while True:
-        (
-            display_rows,
-            flat_entries,
-            selectable_indices,
-        ) = build_display_rows(desktops, favourites, filter_mode)
+        state = screen_state[active_screen]
+        selected_idx = int(state.get("selected_idx") or 0)
+        top_row = int(state.get("top_row") or 0)
+        anchor_name = state.get("anchor_name")
+        retain_offset = state.get("retain_offset")
 
-        if selection_anchor_name and flat_entries:
-            anchored_idx = find_entry_index(flat_entries, selection_anchor_name)
+        if active_screen == "configured":
+            build_fn = build_configured_rows
+            rows, flat_entries, selectable_indices = build_fn(
+                desktops, favourites, filter_mode
+            )
+        elif active_screen == "detected":
+            rows, flat_entries, selectable_indices = build_detection_rows(
+                desktops, favourites, filter_mode, detection_map
+            )
+        else:  # install
+            rows, flat_entries, selectable_indices = build_install_rows(
+                desktops, favourites, filter_mode, detection_map
+            )
+
+        if anchor_name and flat_entries:
+            anchored_idx = find_entry_index(flat_entries, anchor_name)
             if anchored_idx is not None:
                 selected_idx = anchored_idx
-            selection_anchor_name = None
+            state["anchor_name"] = None
 
         if flat_entries:
             selected_idx = max(0, min(selected_idx, len(flat_entries) - 1))
@@ -293,6 +732,8 @@ def curses_main(
         else:
             selected_idx = 0
             selected_row_index = None
+
+        state["selected_idx"] = selected_idx
 
         stdscr.erase()
         height, width = stdscr.getmaxyx()
@@ -302,13 +743,20 @@ def curses_main(
 
         stdscr.addstr(0, 0, title[: width], curses.A_BOLD)
         stdscr.addstr(1, 0, subtitle[: width])
+        nav_line = format_screen_nav(active_screen)
+        stdscr.addstr(2, 0, nav_line[:width], curses.A_BOLD)
 
-        help_lines = format_help_lines(config_path, filter_mode)
+        list_start = 4
+        install_command_display = (
+            flat_entries[selected_idx].install_command if active_screen == "install" and flat_entries else None
+        )
+        help_lines = format_help_lines(
+            config_path, filter_mode, active_screen, install_command_display
+        )
         for i, line in enumerate(help_lines, start=height - len(help_lines)):
             if 0 <= i < height:
                 stdscr.addstr(i, 0, line[: width], curses.A_DIM)
 
-        list_start = 3
         list_height = max(0, height - list_start - len(help_lines))
 
         if list_height <= 0:
@@ -321,83 +769,119 @@ def curses_main(
             stdscr.refresh()
             key = stdscr.getch()
             if key in (ord("q"), ord("Q"), 27):
-                return None
+                return LauncherResult(kind="exit")
             if key in (ord("s"), ord("S")):
                 filter_mode = cycle_filter_mode(filter_mode)
-                top_row = 0
+                for screen in SCREEN_SEQUENCE:
+                    screen_state[screen]["top_row"] = 0
             continue
 
-        total_rows = len(display_rows)
-        if selected_row_index is not None:
+        total_rows = len(rows)
+        max_top = max(0, total_rows - list_height)
+
+        if retain_offset is not None and selected_row_index is not None:
+            desired_top = selected_row_index - int(retain_offset)
+            top_row = max(0, min(desired_top, max_top))
+            state["retain_offset"] = None
+        elif selected_row_index is not None:
             if selected_row_index < top_row:
                 top_row = selected_row_index
             elif selected_row_index >= top_row + list_height:
                 top_row = selected_row_index - list_height + 1
 
-        max_top = max(0, total_rows - list_height)
         if top_row > max_top:
             top_row = max_top
         if top_row < 0:
             top_row = 0
+        state["top_row"] = top_row
 
-        rows_to_render = display_rows[top_row : top_row + list_height]
+        rows_to_render = rows[top_row : top_row + list_height]
         for idx, row in enumerate(rows_to_render):
             actual_index = top_row + idx
             screen_row = list_start + idx
             row_type = row["type"]
+            text = row.get("text", "")
+            attr = row.get("attr", curses.A_NORMAL)
 
             if row_type == "header":
-                header_text = row["label"]
                 stdscr.addstr(
                     screen_row,
                     0,
-                    header_text[: width],
+                    text[: width],
                     curses.A_BOLD | curses.A_UNDERLINE,
                 )
             elif row_type == "entry":
                 entry = row["entry"]
-                fav_mark = "*" if entry.name in favourites else " "
-                session_label = entry.session_type.upper()
-                line = f"{fav_mark} {entry.name} [{session_label}]"
+                formatted = text
                 if entry.description:
                     suffix = f" — {entry.description}"
-                    available = max(0, width - len(line) - 1)
-                    line = f"{line} {suffix[:available]}"
-
+                    available = max(0, width - len(formatted) - 1)
+                    formatted = f"{formatted} {suffix[:available]}"
                 if selected_row_index is not None and actual_index == selected_row_index:
-                    stdscr.attron(curses.A_REVERSE)
-                    stdscr.addstr(screen_row, 0, line[: width])
-                    stdscr.attroff(curses.A_REVERSE)
+                    stdscr.addstr(
+                        screen_row,
+                        0,
+                        formatted[: width],
+                        attr | curses.A_REVERSE,
+                    )
                 else:
-                    stdscr.addstr(screen_row, 0, line[: width])
+                    stdscr.addstr(screen_row, 0, formatted[: width], attr)
             else:
-                info_text = row["label"]
-                stdscr.addstr(screen_row, 0, info_text[: width], curses.A_DIM)
+                stdscr.addstr(screen_row, 0, text[: width], attr)
 
         stdscr.refresh()
         key = stdscr.getch()
 
         if key in (curses.KEY_UP, ord("k"), ord("K")) and flat_entries:
             selected_idx = (selected_idx - 1) % len(flat_entries)
+            state["selected_idx"] = selected_idx
         elif key in (curses.KEY_DOWN, ord("j"), ord("J")) and flat_entries:
             selected_idx = (selected_idx + 1) % len(flat_entries)
+            state["selected_idx"] = selected_idx
         elif key in (curses.KEY_ENTER, 10, 13) and flat_entries:
-            return flat_entries[selected_idx]
+            entry = flat_entries[selected_idx]
+            if active_screen == "install":
+                if not entry.install_command:
+                    continue
+                confirmed = prompt_install_confirmation(stdscr, entry)
+                if confirmed:
+                    return LauncherResult(kind="install", entry=entry)
+            else:
+                return LauncherResult(kind="launch", entry=entry)
         elif key in (ord("q"), ord("Q"), 27):
-            return None
+            return LauncherResult(kind="exit")
         elif key in (ord("f"), ord("F")) and flat_entries:
+            if selected_row_index is not None:
+                state["retain_offset"] = selected_row_index - top_row
             current = flat_entries[selected_idx]
             if current.name in favourites:
                 favourites.remove(current.name)
             else:
                 favourites.add(current.name)
-            selection_anchor_name = current.name
+            state["anchor_name"] = current.name
         elif key in (ord("s"), ord("S")):
             if flat_entries:
-                selection_anchor_name = flat_entries[selected_idx].name
+                state["anchor_name"] = flat_entries[selected_idx].name
             filter_mode = cycle_filter_mode(filter_mode)
-            selected_idx = 0
-            top_row = 0
+            for screen in SCREEN_SEQUENCE:
+                screen_state[screen]["top_row"] = 0
+        elif key in (ord("d"), ord("D")):
+            detection_map.update(detect_desktops(desktops))
+        elif key in (ord("1"),):
+            if active_screen != "configured":
+                if flat_entries:
+                    state["anchor_name"] = flat_entries[selected_idx].name
+                active_screen = "configured"
+        elif key in (ord("2"),):
+            if active_screen != "detected":
+                if flat_entries:
+                    state["anchor_name"] = flat_entries[selected_idx].name
+                active_screen = "detected"
+        elif key in (ord("3"),):
+            if active_screen != "install":
+                if flat_entries:
+                    state["anchor_name"] = flat_entries[selected_idx].name
+                active_screen = "install"
 
 
 def resolve_favourites_path() -> Path:
@@ -499,24 +983,42 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     favourites.intersection_update(available_names)
     initial_filtered_favourites = initial_favourites & available_names
 
-    try:
-        selection = curses.wrapper(
-            curses_main, desktops, config_path, favourites
-        )
-    except curses.error as error:
-        print(f"desktop: Failed to initialize curses UI: {error}", file=sys.stderr)
-        return 1
+    detection_map = detect_desktops(desktops)
+
+    while True:
+        try:
+            result = curses.wrapper(
+                curses_main, desktops, config_path, favourites, detection_map
+            )
+        except curses.error as error:
+            print(f"desktop: Failed to initialize curses UI: {error}", file=sys.stderr)
+            return 1
+
+        if result.kind == "exit":
+            clear_terminal()
+            break
+
+        if result.kind == "install":
+            entry = result.entry
+            if not entry or not entry.install_command:
+                continue
+            perform_install(entry)
+            detection_map = detect_desktops(desktops)
+            continue
+
+        if result.kind == "launch" and result.entry:
+            selection = result.entry
+            print(f"Launching '{selection.name}' using: {selection.command}")
+            exec_command(selection.command)
+            return 0
+
+        # Fallback safety: if result is unexpected, continue loop.
+        detection_map = detect_desktops(desktops)
 
     if favourites != initial_filtered_favourites:
         save_favourites(favourites_path, favourites)
 
-    if selection is None:
-        clear_terminal()
-        return 0
-
-    print(f"Launching '{selection.name}' using: {selection.command}")
-    exec_command(selection.command)
-    return 0  # Unreachable, exec replaces process
+    return 0
 
 
 if __name__ == "__main__":
