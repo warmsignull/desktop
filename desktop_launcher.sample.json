@@ -28,6 +28,13 @@
           "command": "sudo pacman -Rns gnome-tweaks"
         }
       ],
+      "uninstall_extras": [
+        {
+          "name": "Remove GNOME Tweaks",
+          "command": "sudo pacman -Rns gnome-tweaks"
+        }
+      ],
+      "show_in_configured": false,
       "description": "Full GNOME Shell session on Wayland"
     },
     {
@@ -37,6 +44,7 @@
       "detect_commands": ["gnome-session"],
       "install_command": "sudo pacman -S --needed gnome",
       "uninstall_command": "sudo pacman -Rns gnome",
+      "show_in_configured": false,
       "description": "Run GNOME session under Xorg"
     },
     {
@@ -58,6 +66,7 @@
           "command": "sudo pacman -Rns kde-applications"
         }
       ],
+      "show_in_configured": false,
       "description": "KDE Plasma desktop on Wayland"
     },
     {
@@ -67,6 +76,7 @@
       "detect_commands": ["startplasma-x11"],
       "install_command": "sudo pacman -S --needed plasma",
       "uninstall_command": "sudo pacman -Rns plasma",
+      "show_in_configured": false,
       "description": "KDE Plasma desktop on Xorg"
     },
     {
@@ -89,6 +99,7 @@
           "command": "sudo pacman -Rns xfce4-goodies"
         }
       ],
+      "show_in_configured": false,
       "description": "Lightweight GTK desktop"
     },
     {
@@ -98,6 +109,7 @@
       "detect_commands": ["mate-session"],
       "install_command": "sudo pacman -S --needed mate mate-extra",
       "uninstall_command": "sudo pacman -Rns mate mate-extra",
+      "show_in_configured": false,
       "description": "Classic MATE desktop"
     },
     {
@@ -120,6 +132,7 @@
           "command": "sudo pacman -Rns nemo-fileroller mintstick"
         }
       ],
+      "show_in_configured": false,
       "description": "Modern Cinnamon desktop"
     },
     {
@@ -129,6 +142,7 @@
       "detect_commands": ["budgie-desktop"],
       "install_command": "sudo pacman -S --needed budgie-desktop",
       "uninstall_command": "sudo pacman -Rns budgie-desktop",
+      "show_in_configured": false,
       "description": "Budgie desktop from Solus"
     },
     {
@@ -138,6 +152,7 @@
       "detect_commands": ["startlxqt"],
       "install_command": "sudo pacman -S --needed lxqt sddm",
       "uninstall_command": "sudo pacman -Rns lxqt sddm",
+      "show_in_configured": false,
       "description": "Qt-based lightweight desktop"
     },
     {
@@ -147,6 +162,7 @@
       "detect_commands": ["startlxde"],
       "install_command": "sudo pacman -S --needed lxde",
       "uninstall_command": "sudo pacman -Rns lxde",
+      "show_in_configured": false,
       "description": "Lightweight LXDE desktop"
     },
     {
@@ -156,6 +172,7 @@
       "detect_commands": ["enlightenment_start"],
       "install_command": "sudo pacman -S --needed enlightenment",
       "uninstall_command": "sudo pacman -Rns enlightenment",
+      "show_in_configured": false,
       "description": "Enlightenment E27 desktop"
     },
     {
@@ -165,6 +182,7 @@
       "detect_commands": ["startdde"],
       "install_command": "sudo pacman -S --needed deepin deepin-extra",
       "uninstall_command": "sudo pacman -Rns deepin deepin-extra",
+      "show_in_configured": false,
       "description": "Deepin desktop environment"
     },
     {
@@ -194,6 +212,7 @@
           "command": "sudo pacman -Rns swaylock swayidle"
         }
       ],
+      "show_in_configured": true,
       "description": "Tiling Wayland compositor"
     },
     {
@@ -215,6 +234,7 @@
           "command": "sudo pacman -Rns xdg-desktop-portal-hyprland waybar"
         }
       ],
+      "show_in_configured": true,
       "description": "Dynamic tiling Wayland compositor"
     },
     {
@@ -236,6 +256,7 @@
           "command": "sudo pacman -Rns wf-shell"
         }
       ],
+      "show_in_configured": false,
       "description": "Wayfire 3D Wayland compositor"
     },
     {
@@ -257,6 +278,7 @@
           "command": "sudo pacman -Rns rivertile"
         }
       ],
+      "show_in_configured": false,
       "description": "Dynamic Wayland compositor"
     },
     {
@@ -266,6 +288,7 @@
       "detect_commands": ["labwc"],
       "install_command": "sudo pacman -S --needed labwc",
       "uninstall_command": "sudo pacman -Rns labwc",
+      "show_in_configured": false,
       "description": "Wayland stacking compositor"
     },
     {
@@ -287,6 +310,7 @@
           "command": "sudo pacman -Rns i3status dmenu"
         }
       ],
+      "show_in_configured": true,
       "description": "Popular tiling window manager"
     },
     {
@@ -308,6 +332,7 @@
           "command": "sudo pacman -Rns sxhkd"
         }
       ],
+      "show_in_configured": false,
       "description": "Binary space partitioning WM"
     },
     {
@@ -329,6 +354,7 @@
           "command": "sudo pacman -Rns rofi picom"
         }
       ],
+      "show_in_configured": false,
       "description": "Lua-configurable tiling WM"
     },
     {
@@ -350,6 +376,7 @@
           "command": "sudo pacman -Rns qtile-extras"
         }
       ],
+      "show_in_configured": false,
       "description": "Python-powered tiling WM"
     },
     {
@@ -371,6 +398,7 @@
           "command": "sudo pacman -Rns obconf tint2"
         }
       ],
+      "show_in_configured": false,
       "description": "Stacking window manager"
     },
     {
@@ -392,6 +420,7 @@
           "command": "sudo pacman -Rns icewm-themes"
         }
       ],
+      "show_in_configured": false,
       "description": "Lightweight stacking WM"
     },
     {
@@ -401,6 +430,7 @@
       "detect_commands": ["startfluxbox"],
       "install_command": "sudo pacman -S --needed fluxbox",
       "uninstall_command": "sudo pacman -Rns fluxbox",
+      "show_in_configured": false,
       "description": "Fluxbox stacking window manager"
     },
     {
@@ -422,6 +452,7 @@
           "command": "sudo pacman -Rns xmobar"
         }
       ],
+      "show_in_configured": false,
       "description": "Haskell tiling WM"
     }
   ]

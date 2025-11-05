@@ -59,6 +59,7 @@ class DesktopEntry:
     install_extras: Tuple["CommandExtra", ...] = ()
     uninstall_command: Optional[str] = None
     uninstall_extras: Tuple["CommandExtra", ...] = ()
+    show_in_configured: bool = True
     description: Optional[str] = None
 
 
@@ -152,6 +153,7 @@ def load_config(path: Path) -> List[DesktopEntry]:
         raw_uninstall_command = item.get("uninstall_command")
         raw_install_extras = item.get("install_extras")
         raw_uninstall_extras = item.get("uninstall_extras")
+        raw_show_in_configured = item.get("show_in_configured")
 
         if not isinstance(name, str) or not name.strip():
             raise ConfigError(
@@ -288,6 +290,15 @@ def load_config(path: Path) -> List[DesktopEntry]:
                 )
             uninstall_extras = tuple(extras)
 
+        show_in_configured = True
+        if raw_show_in_configured is not None:
+            if not isinstance(raw_show_in_configured, bool):
+                raise ConfigError(
+                    f"Entry '{name}' in {path} has invalid 'show_in_configured'. "
+                    "It must be true or false when provided."
+                )
+            show_in_configured = raw_show_in_configured
+
         normalized_session_type = normalize_session_type(session_type, command, name, path)
 
         entries.append(
@@ -300,6 +311,7 @@ def load_config(path: Path) -> List[DesktopEntry]:
                 install_extras=install_extras,
                 uninstall_command=uninstall_command,
                 uninstall_extras=uninstall_extras,
+                show_in_configured=show_in_configured,
                 description=description,
             )
         )
@@ -449,7 +461,11 @@ def build_configured_rows(
     favourites: Set[str],
     filter_mode: str,
 ) -> tuple[List[dict], List[DesktopEntry], List[int]]:
-    filtered = filter_desktops(desktops, filter_mode)
+    filtered = [
+        entry
+        for entry in filter_desktops(desktops, filter_mode)
+        if entry.show_in_configured
+    ]
     favourite_entries = [entry for entry in filtered if entry.name in favourites]
 
     sections = [
