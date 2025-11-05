@@ -22,7 +22,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 
 DEFAULT_CONFIG_PATH = Path("/etc/desktop_launcher.json")
@@ -35,12 +35,34 @@ FILTER_LABELS = {
     "x11": "X11 only",
     "wayland": "Wayland only",
 }
-SCREEN_SEQUENCE = ("configured", "detected", "install")
+SCREEN_SEQUENCE = ("configured", "detected", "install", "options")
 SCREEN_LABELS = {
     "configured": "Configured",
     "detected": "Detect",
     "install": "Install",
+    "options": "Options",
 }
+SUPPORTED_PACKAGE_MANAGERS: Tuple[Tuple[str, str], ...] = (
+    ("pacman", "Pacman (Arch)"),
+    ("apt", "APT (Debian/Ubuntu)"),
+    ("dnf", "DNF (Fedora)"),
+    ("zypper", "Zypper (openSUSE)"),
+    ("emerge", "Portage (Gentoo)"),
+    ("xbps-install", "XBPS (Void)"),
+    ("apk", "APK (Alpine)"),
+    ("brew", "Homebrew"),
+)
+PACKAGE_MANAGER_COMMANDS = {
+    "pacman": "pacman",
+    "apt": "apt-get",
+    "dnf": "dnf",
+    "zypper": "zypper",
+    "emerge": "emerge",
+    "xbps-install": "xbps-install",
+    "apk": "apk",
+    "brew": "brew",
+}
+DEFAULT_PACKAGE_MANAGER = SUPPORTED_PACKAGE_MANAGERS[0][0]
 
 
 class ConfigError(RuntimeError):
@@ -55,12 +77,32 @@ class DesktopEntry:
     command: str
     session_type: str
     detect_commands: Tuple[str, ...] = ()
-    install_command: Optional[str] = None
+    install_command: Optional[CommandSpec] = None
     install_extras: Tuple["CommandExtra", ...] = ()
-    uninstall_command: Optional[str] = None
+    uninstall_command: Optional[CommandSpec] = None
     uninstall_extras: Tuple["CommandExtra", ...] = ()
     show_in_configured: bool = True
     description: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class CommandSpec:
+    """Command variants keyed by package manager."""
+
+    commands: Dict[str, str]
+
+    def resolve(self, manager: Optional[str]) -> Optional[str]:
+        if not self.commands:
+            return None
+        if manager and manager in self.commands:
+            return self.commands[manager]
+        if "default" in self.commands:
+            return self.commands["default"]
+        # Fallback to first available command
+        return next(iter(self.commands.values()), None)
+
+    def available_managers(self) -> Set[str]:
+        return set(self.commands.keys())
 
 
 @dataclass(frozen=True)
@@ -68,7 +110,7 @@ class CommandExtra:
     """Represents an optional extra command that can accompany install/uninstall."""
 
     name: str
-    command: str
+    command: CommandSpec
     description: Optional[str] = None
 
 
@@ -78,7 +120,111 @@ class LauncherResult:
 
     kind: str  # "launch", "install", "uninstall", "exit"
     entry: Optional[DesktopEntry] = None
-    extras: Tuple[CommandExtra, ...] = ()
+    primary_command: Optional[str] = None
+    extras: Tuple[Tuple[CommandExtra, str], ...] = ()
+
+
+def package_manager_label(key: Optional[str]) -> str:
+    if key is None:
+        return "Auto"
+    for value, label in SUPPORTED_PACKAGE_MANAGERS:
+        if value == key:
+            return label
+    return key
+
+
+def detect_package_manager() -> Optional[str]:
+    for manager, command in PACKAGE_MANAGER_COMMANDS.items():
+        if shutil.which(command):
+            return manager
+    # Fallback to /etc/os-release heuristics
+    os_release = Path("/etc/os-release")
+    if os_release.exists():
+        try:
+            data = os_release.read_text(encoding="utf-8")
+            info = {}
+            for line in data.splitlines():
+                if "=" in line:
+                    key, value = line.split("=", 1)
+                    info[key.strip()] = value.strip().strip('"')
+            distro_id = info.get("ID", "").lower()
+            if distro_id in {"arch", "manjaro"}:
+                return "pacman"
+            if distro_id in {"ubuntu", "debian", "linuxmint", "elementary"}:
+                return "apt"
+            if distro_id in {"fedora"}:
+                return "dnf"
+            if distro_id in {"opensuse", "opensuse-tumbleweed", "sles"}:
+                return "zypper"
+            if distro_id in {"gentoo"}:
+                return "emerge"
+            if distro_id in {"void"}:
+                return "xbps-install"
+            if distro_id in {"alpine"}:
+                return "apk"
+        except OSError:
+            pass
+    return None
+
+
+def parse_command_spec(
+    raw_value: object,
+    entry_name: str,
+    config_path: Path,
+    field_name: str,
+) -> Optional[CommandSpec]:
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, str):
+        command = raw_value.strip()
+        if not command:
+            raise ConfigError(
+                f"Entry '{entry_name}' in {config_path} has an empty '{field_name}'."
+            )
+        return CommandSpec({"default": command})
+    if isinstance(raw_value, dict):
+        commands: Dict[str, str] = {}
+        for key, value in raw_value.items():
+            if not isinstance(key, str):
+                raise ConfigError(
+                    f"Entry '{entry_name}' in {config_path} has a non-string "
+                    f"package manager key in '{field_name}'."
+                )
+            if not isinstance(value, str) or not value.strip():
+                raise ConfigError(
+                    f"Entry '{entry_name}' in {config_path} has an invalid command "
+                    f"for manager '{key}' in '{field_name}'."
+                )
+            commands[key.strip().lower()] = value.strip()
+        if not commands:
+            return None
+        return CommandSpec(commands)
+    raise ConfigError(
+        f"Entry '{entry_name}' in {config_path} has an invalid '{field_name}'. "
+        "Use a string or an object keyed by package managers."
+    )
+
+
+def resolve_command(
+    spec: Optional[CommandSpec],
+    package_manager: Optional[str],
+) -> Optional[str]:
+    if spec is None:
+        return None
+    return spec.resolve(package_manager)
+
+
+def compute_effective_package_manager(
+    detected: Optional[str], override: Optional[str]
+) -> str:
+    return (override or detected or DEFAULT_PACKAGE_MANAGER)
+
+
+def save_config(path: Path, data: Dict[str, object]) -> None:
+    serialized = json.dumps(data, indent=2, sort_keys=True)
+    if not serialized.endswith("\n"):
+        serialized += "\n"
+    path.write_text(serialized, encoding="utf-8")
 
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
@@ -112,7 +258,7 @@ def resolve_config_path(args: argparse.Namespace) -> Path:
     return DEFAULT_CONFIG_PATH
 
 
-def load_config(path: Path) -> List[DesktopEntry]:
+def load_config(path: Path) -> Tuple[List[DesktopEntry], Dict[str, object]]:
     try:
         raw_text = path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
@@ -191,14 +337,9 @@ def load_config(path: Path) -> List[DesktopEntry]:
                 parsed_commands.append(cmd.strip())
             detect_commands = tuple(parsed_commands)
 
-        install_command: Optional[str] = None
-        if raw_install_command is not None:
-            if not isinstance(raw_install_command, str) or not raw_install_command.strip():
-                raise ConfigError(
-                    f"Entry '{name}' in {path} has an invalid 'install_command'. "
-                    "It must be a non-empty string when provided."
-                )
-            install_command = raw_install_command.strip()
+        install_command = parse_command_spec(
+            raw_install_command, name, path, "install_command"
+        )
 
         install_extras: Tuple[CommandExtra, ...] = ()
         if raw_install_extras is not None:
@@ -222,10 +363,13 @@ def load_config(path: Path) -> List[DesktopEntry]:
                         f"Entry '{name}' in {path} has an install extra at position "
                         f"{extra_idx} with an invalid 'name'."
                     )
-                if not isinstance(extra_command, str) or not extra_command.strip():
+                parsed_command = parse_command_spec(
+                    extra_command, name, path, f"install_extras[{extra_name}].command"
+                )
+                if parsed_command is None:
                     raise ConfigError(
                         f"Entry '{name}' in {path} has an install extra '{extra_name}' "
-                        "with an invalid 'command'. It must be a non-empty string."
+                        "without any commands."
                     )
                 if extra_description is not None and not isinstance(extra_description, str):
                     raise ConfigError(
@@ -235,20 +379,15 @@ def load_config(path: Path) -> List[DesktopEntry]:
                 extras.append(
                     CommandExtra(
                         name=extra_name.strip(),
-                        command=extra_command.strip(),
+                        command=parsed_command,
                         description=extra_description,
                     )
                 )
             install_extras = tuple(extras)
 
-        uninstall_command: Optional[str] = None
-        if raw_uninstall_command is not None:
-            if not isinstance(raw_uninstall_command, str) or not raw_uninstall_command.strip():
-                raise ConfigError(
-                    f"Entry '{name}' in {path} has an invalid 'uninstall_command'. "
-                    "It must be a non-empty string when provided."
-                )
-            uninstall_command = raw_uninstall_command.strip()
+        uninstall_command = parse_command_spec(
+            raw_uninstall_command, name, path, "uninstall_command"
+        )
 
         uninstall_extras: Tuple[CommandExtra, ...] = ()
         if raw_uninstall_extras is not None:
@@ -272,10 +411,13 @@ def load_config(path: Path) -> List[DesktopEntry]:
                         f"Entry '{name}' in {path} has an uninstall extra at position "
                         f"{extra_idx} with an invalid 'name'."
                     )
-                if not isinstance(extra_command, str) or not extra_command.strip():
+                parsed_command = parse_command_spec(
+                    extra_command, name, path, f"uninstall_extras[{extra_name}].command"
+                )
+                if parsed_command is None:
                     raise ConfigError(
                         f"Entry '{name}' in {path} has an uninstall extra '{extra_name}' "
-                        "with an invalid 'command'. It must be a non-empty string."
+                        "without any commands."
                     )
                 if extra_description is not None and not isinstance(extra_description, str):
                     raise ConfigError(
@@ -285,7 +427,7 @@ def load_config(path: Path) -> List[DesktopEntry]:
                 extras.append(
                     CommandExtra(
                         name=extra_name.strip(),
-                        command=extra_command.strip(),
+                        command=parsed_command,
                         description=extra_description,
                     )
                 )
@@ -318,7 +460,7 @@ def load_config(path: Path) -> List[DesktopEntry]:
         )
         seen_names.add(name)
 
-    return entries
+    return entries, parsed
 
 
 def normalize_session_type(
@@ -552,93 +694,114 @@ def build_install_rows(
     favourites: Set[str],
     filter_mode: str,
     detection_map: Dict[str, bool],
+    package_manager: str,
 ) -> tuple[List[dict], List[DesktopEntry], List[int]]:
     filtered = filter_desktops(desktops, filter_mode)
+    pm_label = package_manager_label(package_manager)
+
+    install_commands = {
+        entry.name: resolve_command(entry.install_command, package_manager)
+        for entry in filtered
+    }
+    uninstall_commands = {
+        entry.name: resolve_command(entry.uninstall_command, package_manager)
+        for entry in filtered
+    }
+
     installed_names = {
         entry.name for entry in filtered if detection_map.get(entry.name, False)
     }
 
-    install_candidates = [entry for entry in filtered if entry.install_command]
-    missing = [entry for entry in install_candidates if entry.name not in installed_names]
-
-    installed_with_install = [
-        entry for entry in install_candidates if entry.name in installed_names
+    missing = [
+        entry
+        for entry in filtered
+        if entry.name not in installed_names and install_commands.get(entry.name)
     ]
 
-    uninstall_candidates = [
-        entry for entry in filtered
-        if entry.uninstall_command and entry.name in installed_names
+    installed_with_uninstall = [
+        entry
+        for entry in filtered
+        if entry.name in installed_names and uninstall_commands.get(entry.name)
     ]
 
-    already_can_uninstall: List[DesktopEntry] = []
-    seen_uninstall = set()
-    for entry in installed_with_install + uninstall_candidates:
-        if entry.name not in seen_uninstall:
-            already_can_uninstall.append(entry)
-            seen_uninstall.add(entry.name)
-
-    already_no_uninstall = [
-        entry for entry in filtered
-        if entry.name in installed_names and entry.name not in seen_uninstall
+    installed_no_uninstall = [
+        entry
+        for entry in filtered
+        if entry.name in installed_names and not uninstall_commands.get(entry.name)
     ]
 
-    no_install_data = [
-        entry for entry in filtered if not entry.install_command
+    not_installable = [
+        entry
+        for entry in filtered
+        if entry.name not in installed_names and not install_commands.get(entry.name)
     ]
 
     display_rows: List[dict] = []
     flat_entries: List[DesktopEntry] = []
     selectable_indices: List[int] = []
-    added_names: Set[str] = set()
+
+    def add_entry(row: dict, entry: DesktopEntry) -> None:
+        display_rows.append(row)
+        if entry not in flat_entries:
+            selectable_indices.append(len(display_rows) - 1)
+            flat_entries.append(entry)
 
     display_rows.append({"type": "header", "text": "Ready to Install"})
     if missing:
         for entry in missing:
             fav_mark = "*" if entry.name in favourites else " "
             session_label = entry.session_type.upper()
-            extras_flag = " +extras" if entry.install_extras else ""
-            line = f"[INSTALL] {fav_mark} {entry.name} [{session_label}]{extras_flag}"
-            display_rows.append(
-                {"type": "entry", "entry": entry, "text": line, "attr": curses.A_BOLD}
+            extras_available = any(
+                resolve_command(extra.command, package_manager) for extra in entry.install_extras
             )
-            selectable_indices.append(len(display_rows) - 1)
-            flat_entries.append(entry)
-            added_names.add(entry.name)
+            extras_flag = " +extras" if extras_available else ""
+            line = f"[INSTALL] {fav_mark} {entry.name} [{session_label}]{extras_flag}"
+            add_entry({"type": "entry", "entry": entry, "text": line, "attr": curses.A_BOLD}, entry)
     else:
-        display_rows.append({"type": "info", "text": "  (nothing to install)", "attr": curses.A_DIM})
+        display_rows.append(
+            {"type": "info", "text": "  (nothing to install)", "attr": curses.A_DIM}
+        )
 
     display_rows.append({"type": "header", "text": "Installed (Uninstall Available)"})
-    if already_can_uninstall:
-        for entry in already_can_uninstall:
+    if installed_with_uninstall:
+        for entry in installed_with_uninstall:
             fav_mark = "*" if entry.name in favourites else " "
             session_label = entry.session_type.upper()
-            extras_flag = " +extras" if entry.uninstall_extras else ""
+            extras_available = any(
+                resolve_command(extra.command, package_manager) for extra in entry.uninstall_extras
+            )
+            extras_flag = " +extras" if extras_available else ""
             line = f"[UNINSTALL] {fav_mark} {entry.name} [{session_label}]{extras_flag}"
             display_rows.append(
                 {"type": "entry", "entry": entry, "text": line, "attr": curses.A_NORMAL}
             )
-            if entry.name not in added_names:
+            if entry not in flat_entries:
                 selectable_indices.append(len(display_rows) - 1)
                 flat_entries.append(entry)
-                added_names.add(entry.name)
     else:
         display_rows.append({"type": "info", "text": "  (none)", "attr": curses.A_DIM})
 
     display_rows.append({"type": "header", "text": "Installed (No Uninstall Command)"})
-    if already_no_uninstall:
-        for entry in already_no_uninstall:
+    if installed_no_uninstall:
+        for entry in installed_no_uninstall:
             fav_mark = "*" if entry.name in favourites else " "
             session_label = entry.session_type.upper()
-            line = f"[OK] {fav_mark} {entry.name} [{session_label}]"
+            line = (
+                f"[OK] {fav_mark} {entry.name} [{session_label}] "
+                f"(no uninstall command for {pm_label})"
+            )
             display_rows.append({"type": "info", "text": line, "attr": curses.A_DIM})
     else:
         display_rows.append({"type": "info", "text": "  (none)", "attr": curses.A_DIM})
 
-    if no_install_data:
+    if not_installable:
         display_rows.append({"type": "header", "text": "Not Installable"})
-        for entry in no_install_data:
+        for entry in not_installable:
             session_label = entry.session_type.upper()
-            line = f"[SKIP] {entry.name} [{session_label}] (missing install_command)"
+            line = (
+                f"[SKIP] {entry.name} [{session_label}] "
+                f"(no install command for {pm_label})"
+            )
             display_rows.append({"type": "info", "text": line, "attr": curses.A_DIM})
 
     if not flat_entries:
@@ -701,18 +864,24 @@ def format_help_lines(
 
 
 def action_detail_menu(
-    stdscr: "curses._CursesWindow", entry: DesktopEntry, action: str
-) -> Tuple[bool, Tuple[CommandExtra, ...]]:
+    stdscr: "curses._CursesWindow",
+    entry: DesktopEntry,
+    action: str,
+    package_manager: str,
+) -> Tuple[bool, Optional[str], Tuple[Tuple[CommandExtra, str], ...]]:
     action = action.lower()
     if action not in {"install", "uninstall"}:
         raise ValueError(f"Unsupported action '{action}'")
 
     if action == "install":
-        command = entry.install_command
+        command_spec = entry.install_command
         extras = entry.install_extras
     else:
-        command = entry.uninstall_command
+        command_spec = entry.uninstall_command
         extras = entry.uninstall_extras
+
+    resolved_primary = resolve_command(command_spec, package_manager)
+    resolved_extras = [resolve_command(extra.command, package_manager) for extra in extras]
 
     selected: Set[int] = set()
     run_index = len(extras)
@@ -720,12 +889,14 @@ def action_detail_menu(
     total_items = cancel_index + 1
     cursor = 0 if extras else run_index
 
+    status_message = ""
+
     while True:
         stdscr.erase()
         height, width = stdscr.getmaxyx()
 
         title = f"{action.title()} {entry.name}"
-        command_text = command or "(none)"
+        command_text = resolved_primary or "(none)"
         instructions = "Space: toggle extras    Enter: run    Esc/q: cancel    ↑/↓: navigate"
         if not extras:
             instructions = "Enter: run    Esc/q: cancel"
@@ -739,13 +910,18 @@ def action_detail_menu(
             stdscr.addstr(row, 0, "Extras:", curses.A_BOLD)
             row += 1
             for idx, extra in enumerate(extras):
+                available = resolved_extras[idx] is not None
                 mark = "[x]" if idx in selected else "[ ]"
                 line = f"{mark} {extra.name}"
-                if extra.description:
+                if not available:
+                    line = f"{line} (no command for {package_manager_label(package_manager)})"
+                elif extra.description:
                     suffix = f" — {extra.description}"
-                    available = max(0, width - len(line) - 1)
-                    line = f"{line} {suffix[:available]}"
+                    remaining = max(0, width - len(line) - 1)
+                    line = f"{line} {suffix[:remaining]}"
                 attr = curses.A_REVERSE if cursor == idx else curses.A_NORMAL
+                if not available:
+                    attr |= curses.A_DIM
                 stdscr.addstr(row, 0, line[:width], attr)
                 row += 1
         else:
@@ -755,6 +931,8 @@ def action_detail_menu(
         run_attr = curses.A_BOLD
         if cursor == run_index:
             run_attr |= curses.A_REVERSE
+        if resolved_primary is None:
+            run_attr |= curses.A_DIM
         stdscr.addstr(row, 0, "Run"[:width], run_attr)
         row += 1
 
@@ -765,7 +943,7 @@ def action_detail_menu(
 
         detail_line = ""
         if cursor < len(extras):
-            detail_line = extras[cursor].command
+            detail_line = resolved_extras[cursor] or "(no command available)"
         stdscr.addstr(height - 1, 0, " " * width)
         if detail_line:
             stdscr.addstr(
@@ -774,6 +952,9 @@ def action_detail_menu(
                 f"Extra command: {detail_line}"[:width],
                 curses.A_DIM,
             )
+        if status_message:
+            stdscr.addstr(height - 2, 0, " " * width)
+            stdscr.addstr(height - 2, 0, status_message[:width], curses.A_BOLD)
 
         stdscr.refresh()
 
@@ -784,23 +965,49 @@ def action_detail_menu(
             cursor = (cursor + 1) % total_items
         elif key in (ord(" "),):
             if cursor < len(extras):
-                if cursor in selected:
+                if resolved_extras[cursor] is None:
+                    status_message = (
+                        f"No command available for {package_manager_label(package_manager)}."
+                    )
+                elif cursor in selected:
                     selected.remove(cursor)
+                    status_message = ""
                 else:
                     selected.add(cursor)
+                    status_message = ""
         elif key in (curses.KEY_ENTER, 10, 13):
             if cursor < len(extras):
-                if cursor in selected:
+                if resolved_extras[cursor] is None:
+                    status_message = (
+                        f"No command available for {package_manager_label(package_manager)}."
+                    )
+                elif cursor in selected:
                     selected.remove(cursor)
+                    status_message = ""
                 else:
                     selected.add(cursor)
+                    status_message = ""
             elif cursor == run_index:
-                chosen = tuple(extras[idx] for idx in sorted(selected))
-                return True, chosen
+                if resolved_primary is None and not any(resolved_extras):
+                    status_message = (
+                        f"No commands available for {package_manager_label(package_manager)}."
+                    )
+                    continue
+                if resolved_primary is None and not selected:
+                    status_message = (
+                        f"No {action} command for {package_manager_label(package_manager)}."
+                    )
+                    continue
+                chosen = tuple(
+                    (extras[idx], resolved_extras[idx])
+                    for idx in sorted(selected)
+                    if resolved_extras[idx]
+                )
+                return True, resolved_primary, chosen
             else:
-                return False, tuple()
+                return False, None, tuple()
         elif key in (27, ord("q"), ord("Q")):
-            return False, tuple()
+            return False, None, tuple()
 
 
 def run_shell_command(command: str) -> int:
@@ -813,26 +1020,29 @@ def run_shell_command(command: str) -> int:
 
 
 def perform_entry_action(
-    entry: DesktopEntry, action: str, extras: Sequence[CommandExtra]
+    entry: DesktopEntry,
+    action: str,
+    primary_command: Optional[str],
+    extras: Sequence[Tuple[CommandExtra, str]],
 ) -> None:
     clear_terminal()
     action = action.lower()
     if action not in {"install", "uninstall"}:
         raise ValueError(f"Unsupported action '{action}'")
 
-    command = entry.install_command if action == "install" else entry.uninstall_command
-
     print(f"Ready to {action} '{entry.name}'.")
 
-    if command:
-        exit_code = run_shell_command(command)
+    if primary_command:
+        exit_code = run_shell_command(primary_command)
         print(f"{action.title()} command exited with code {exit_code}.")
     else:
         print(f"No primary {action} command configured.")
 
-    for extra in extras:
+    for extra, command in extras:
+        if not command:
+            continue
         print(f"\nRunning optional extra '{extra.name}'...")
-        exit_code = run_shell_command(extra.command)
+        exit_code = run_shell_command(command)
         print(f"Extra '{extra.name}' command exited with code {exit_code}.")
 
     input("\nPress Enter to return to the launcher...")
@@ -844,6 +1054,8 @@ def curses_main(
     config_path: Path,
     favourites: Set[str],
     detection_map: Dict[str, bool],
+    package_state: Dict[str, object],
+    save_package_state: Callable[[], None],
 ) -> LauncherResult:
     try:
         curses.curs_set(0)
