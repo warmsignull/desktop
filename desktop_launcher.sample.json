@@ -1,142 +1,428 @@
 {
   "desktops": [
     {
+      "name": "GNOME (Wayland)",
+      "command": "env GNOME_SESSION_DISABLE_USER_SYSTEMD=1 XDG_SESSION_TYPE=wayland dbus-run-session -- gnome-shell --wayland",
+      "session_type": "wayland",
+      "detect_commands": ["gnome-shell"],
+      "install_command": "sudo pacman -S --needed gnome",
+      "install_extras": [
+        {
+          "name": "GNOME Extra Apps",
+          "command": "sudo pacman -S --needed gnome-extra",
+          "description": "Extra GNOME applications"
+        },
+        {
+          "name": "GNOME Tweaks",
+          "command": "sudo pacman -S --needed gnome-tweaks"
+        }
+      ],
+      "uninstall_command": "sudo pacman -Rns gnome",
+      "uninstall_extras": [
+        {
+          "name": "Remove GNOME Extra Apps",
+          "command": "sudo pacman -Rns gnome-extra"
+        },
+        {
+          "name": "Remove GNOME Tweaks",
+          "command": "sudo pacman -Rns gnome-tweaks"
+        }
+      ],
+      "description": "Full GNOME Shell session on Wayland"
+    },
+    {
+      "name": "GNOME (X11)",
+      "command": "startx /usr/bin/gnome-session -- :1 vt$XDG_VTNR",
+      "session_type": "x11",
+      "detect_commands": ["gnome-session"],
+      "install_command": "sudo pacman -S --needed gnome",
+      "uninstall_command": "sudo pacman -Rns gnome",
+      "description": "Run GNOME session under Xorg"
+    },
+    {
+      "name": "KDE Plasma (Wayland)",
+      "command": "env XDG_SESSION_TYPE=wayland dbus-run-session -- startplasma-wayland",
+      "session_type": "wayland",
+      "detect_commands": ["startplasma-wayland"],
+      "install_command": "sudo pacman -S --needed plasma",
+      "install_extras": [
+        {
+          "name": "KDE Applications",
+          "command": "sudo pacman -S --needed kde-applications"
+        }
+      ],
+      "uninstall_command": "sudo pacman -Rns plasma",
+      "uninstall_extras": [
+        {
+          "name": "Remove KDE Applications",
+          "command": "sudo pacman -Rns kde-applications"
+        }
+      ],
+      "description": "KDE Plasma desktop on Wayland"
+    },
+    {
+      "name": "KDE Plasma (X11)",
+      "command": "startx /usr/bin/startplasma-x11 -- :2 vt$XDG_VTNR",
+      "session_type": "x11",
+      "detect_commands": ["startplasma-x11"],
+      "install_command": "sudo pacman -S --needed plasma",
+      "uninstall_command": "sudo pacman -Rns plasma",
+      "description": "KDE Plasma desktop on Xorg"
+    },
+    {
+      "name": "Xfce",
+      "command": "startx /usr/bin/startxfce4 -- :3 vt$XDG_VTNR",
+      "session_type": "x11",
+      "detect_commands": ["startxfce4"],
+      "install_command": "sudo pacman -S --needed xfce4",
+      "install_extras": [
+        {
+          "name": "Xfce Goodies",
+          "command": "sudo pacman -S --needed xfce4-goodies",
+          "description": "Panel plugins and utilities"
+        }
+      ],
+      "uninstall_command": "sudo pacman -Rns xfce4",
+      "uninstall_extras": [
+        {
+          "name": "Remove Xfce Goodies",
+          "command": "sudo pacman -Rns xfce4-goodies"
+        }
+      ],
+      "description": "Lightweight GTK desktop"
+    },
+    {
+      "name": "MATE",
+      "command": "startx /usr/bin/mate-session -- :4 vt$XDG_VTNR",
+      "session_type": "x11",
+      "detect_commands": ["mate-session"],
+      "install_command": "sudo pacman -S --needed mate mate-extra",
+      "uninstall_command": "sudo pacman -Rns mate mate-extra",
+      "description": "Classic MATE desktop"
+    },
+    {
+      "name": "Cinnamon",
+      "command": "startx /usr/bin/cinnamon-session -- :5 vt$XDG_VTNR",
+      "session_type": "x11",
+      "detect_commands": ["cinnamon-session"],
+      "install_command": "sudo pacman -S --needed cinnamon",
+      "install_extras": [
+        {
+          "name": "Cinnamon Extras",
+          "command": "sudo pacman -S --needed nemo-fileroller mintstick",
+          "description": "Common Cinnamon utilities"
+        }
+      ],
+      "uninstall_command": "sudo pacman -Rns cinnamon",
+      "uninstall_extras": [
+        {
+          "name": "Remove Cinnamon Extras",
+          "command": "sudo pacman -Rns nemo-fileroller mintstick"
+        }
+      ],
+      "description": "Modern Cinnamon desktop"
+    },
+    {
+      "name": "Budgie",
+      "command": "startx /usr/bin/budgie-desktop -- :6 vt$XDG_VTNR",
+      "session_type": "x11",
+      "detect_commands": ["budgie-desktop"],
+      "install_command": "sudo pacman -S --needed budgie-desktop",
+      "uninstall_command": "sudo pacman -Rns budgie-desktop",
+      "description": "Budgie desktop from Solus"
+    },
+    {
+      "name": "LXQt",
+      "command": "startx /usr/bin/startlxqt -- :7 vt$XDG_VTNR",
+      "session_type": "x11",
+      "detect_commands": ["startlxqt"],
+      "install_command": "sudo pacman -S --needed lxqt sddm",
+      "uninstall_command": "sudo pacman -Rns lxqt sddm",
+      "description": "Qt-based lightweight desktop"
+    },
+    {
+      "name": "LXDE",
+      "command": "startx /usr/bin/startlxde -- :8 vt$XDG_VTNR",
+      "session_type": "x11",
+      "detect_commands": ["startlxde"],
+      "install_command": "sudo pacman -S --needed lxde",
+      "uninstall_command": "sudo pacman -Rns lxde",
+      "description": "Lightweight LXDE desktop"
+    },
+    {
+      "name": "Enlightenment",
+      "command": "startx /usr/bin/enlightenment_start -- :9 vt$XDG_VTNR",
+      "session_type": "x11",
+      "detect_commands": ["enlightenment_start"],
+      "install_command": "sudo pacman -S --needed enlightenment",
+      "uninstall_command": "sudo pacman -Rns enlightenment",
+      "description": "Enlightenment E27 desktop"
+    },
+    {
+      "name": "Deepin",
+      "command": "startx /usr/bin/startdde -- :10 vt$XDG_VTNR",
+      "session_type": "x11",
+      "detect_commands": ["startdde"],
+      "install_command": "sudo pacman -S --needed deepin deepin-extra",
+      "uninstall_command": "sudo pacman -Rns deepin deepin-extra",
+      "description": "Deepin desktop environment"
+    },
+    {
       "name": "Sway",
-      "command": "sway --unsupported-gpu",
+      "command": "sway",
       "session_type": "wayland",
       "detect_commands": ["sway"],
-      "install_command": "sudo apt install sway",
+      "install_command": "sudo pacman -S --needed sway",
       "install_extras": [
         {
           "name": "Waybar",
-          "command": "sudo apt install waybar",
-          "description": "Wayland status bar"
+          "command": "sudo pacman -S --needed waybar"
         },
         {
           "name": "Swaylock & Swayidle",
-          "command": "sudo apt install swaylock swayidle",
-          "description": "Screen locker and idle management"
+          "command": "sudo pacman -S --needed swaylock swayidle"
         }
       ],
-      "description": "Wayland tiling compositor (forces unsupported GPU mode)"
+      "uninstall_command": "sudo pacman -Rns sway",
+      "uninstall_extras": [
+        {
+          "name": "Remove Waybar",
+          "command": "sudo pacman -Rns waybar"
+        },
+        {
+          "name": "Remove Swaylock & Swayidle",
+          "command": "sudo pacman -Rns swaylock swayidle"
+        }
+      ],
+      "description": "Tiling Wayland compositor"
     },
     {
       "name": "Hyprland",
       "command": "Hyprland",
       "session_type": "wayland",
       "detect_commands": ["Hyprland"],
-      "install_command": "sudo apt install hyprland",
+      "install_command": "sudo pacman -S --needed hyprland",
+      "install_extras": [
+        {
+          "name": "Hyprland Extras",
+          "command": "sudo pacman -S --needed xdg-desktop-portal-hyprland waybar"
+        }
+      ],
+      "uninstall_command": "sudo pacman -Rns hyprland",
+      "uninstall_extras": [
+        {
+          "name": "Remove Hyprland Extras",
+          "command": "sudo pacman -Rns xdg-desktop-portal-hyprland waybar"
+        }
+      ],
       "description": "Dynamic tiling Wayland compositor"
     },
     {
-      "name": "GNOME (Wayland Shell)",
-      "command": "env GNOME_SESSION_DISABLE_USER_SYSTEMD=1 XDG_SESSION_TYPE=wayland dbus-run-session -- gnome-shell --wayland",
+      "name": "Wayfire",
+      "command": "env XDG_SESSION_TYPE=wayland dbus-run-session -- wayfire",
       "session_type": "wayland",
-      "detect_commands": ["gnome-shell"],
-      "install_command": "sudo apt install gnome-shell",
+      "detect_commands": ["wayfire"],
+      "install_command": "sudo pacman -S --needed wayfire",
       "install_extras": [
         {
-          "name": "GNOME Tweaks",
-          "command": "sudo apt install gnome-tweaks",
-          "description": "Tweak tool for GNOME Shell"
+          "name": "wf-shell",
+          "command": "sudo pacman -S --needed wf-shell"
         }
       ],
-      "description": "Launch GNOME Shell directly on Wayland (minimal session)"
+      "uninstall_command": "sudo pacman -Rns wayfire",
+      "uninstall_extras": [
+        {
+          "name": "Remove wf-shell",
+          "command": "sudo pacman -Rns wf-shell"
+        }
+      ],
+      "description": "Wayfire 3D Wayland compositor"
     },
     {
-      "name": "Xfce",
-      "command": "startx /usr/bin/startxfce4 -- :1 vt$XDG_VTNR",
-      "session_type": "x11",
-      "detect_commands": ["/usr/bin/startxfce4"],
-      "install_command": "sudo apt install xfce4",
+      "name": "River",
+      "command": "dbus-run-session -- river",
+      "session_type": "wayland",
+      "detect_commands": ["river"],
+      "install_command": "sudo pacman -S --needed river",
       "install_extras": [
         {
-          "name": "Xfce Goodies",
-          "command": "sudo apt install xfce4-goodies",
-          "description": "Optional panel plugins and utilities"
+          "name": "Rivertile",
+          "command": "sudo pacman -S --needed rivertile"
         }
       ],
-      "description": "Launch Xfce in a dedicated Xorg session"
-    },
-    {
-      "name": "MATE",
-      "command": "startx /usr/bin/mate-session -- :2 vt$XDG_VTNR",
-      "session_type": "x11",
-      "detect_commands": ["/usr/bin/mate-session"],
-      "install_command": "sudo apt install mate-desktop-environment",
-      "description": "Start the MATE desktop in its own Xorg server"
-    },
-    {
-      "name": "Cinnamon",
-      "command": "startx /usr/bin/cinnamon-session -- :3 vt$XDG_VTNR",
-      "session_type": "x11",
-      "detect_commands": ["/usr/bin/cinnamon-session"],
-      "install_command": "sudo apt install cinnamon-desktop-environment",
-      "description": "Start Cinnamon desktop on a separate Xorg display"
-    },
-    {
-      "name": "KDE Plasma (Wayland)",
-      "command": "env XDG_SESSION_TYPE=wayland QT_QPA_PLATFORM=wayland dbus-run-session -- startplasma-wayland",
-      "session_type": "wayland",
-      "detect_commands": ["startplasma-wayland"],
-      "install_command": "sudo apt install kde-standard",
-      "description": "Run KDE Plasma on Wayland via dbus-run-session"
-    },
-    {
-      "name": "Enlightenment (X11)",
-      "command": "startx /usr/bin/enlightenment_start -- :9 vt$XDG_VTNR",
-      "session_type": "x11",
-      "detect_commands": ["/usr/bin/enlightenment_start"],
-      "install_command": "sudo apt install enlightenment",
-      "description": "Start Enlightenment in a dedicated Xorg session"
-    },
-    {
-      "name": "LXQt",
-      "command": "startx /usr/bin/startlxqt -- :4 vt$XDG_VTNR",
-      "session_type": "x11",
-      "detect_commands": ["/usr/bin/startlxqt"],
-      "install_command": "sudo apt install lxqt",
-      "description": "Start LXQt desktop in a dedicated Xorg session"
-    },
-    {
-      "name": "LXDE",
-      "command": "startx /usr/bin/startlxde -- :5 vt$XDG_VTNR",
-      "session_type": "x11",
-      "detect_commands": ["/usr/bin/startlxde"],
-      "install_command": "sudo apt install lxde",
-      "description": "Launch LXDE on its own Xorg display"
-    },
-    {
-      "name": "IceWM",
-      "command": "startx /usr/bin/icewm-session -- :6 vt$XDG_VTNR",
-      "session_type": "x11",
-      "detect_commands": ["/usr/bin/icewm-session"],
-      "install_command": "sudo apt install icewm",
-      "description": "Start IceWM session via startx"
-    },
-    {
-      "name": "Openbox",
-      "command": "startx /usr/bin/openbox-session -- :7 vt$XDG_VTNR",
-      "session_type": "x11",
-      "detect_commands": ["/usr/bin/openbox-session"],
-      "install_command": "sudo apt install openbox",
-      "description": "Launch Openbox session using startx"
+      "uninstall_command": "sudo pacman -Rns river",
+      "uninstall_extras": [
+        {
+          "name": "Remove Rivertile",
+          "command": "sudo pacman -Rns rivertile"
+        }
+      ],
+      "description": "Dynamic Wayland compositor"
     },
     {
       "name": "labwc",
       "command": "env XDG_SESSION_TYPE=wayland dbus-run-session -- labwc",
       "session_type": "wayland",
       "detect_commands": ["labwc"],
-      "install_command": "sudo apt install labwc",
-      "description": "Run labwc Wayland compositor under dbus-run-session"
+      "install_command": "sudo pacman -S --needed labwc",
+      "uninstall_command": "sudo pacman -Rns labwc",
+      "description": "Wayland stacking compositor"
     },
     {
       "name": "i3",
-      "command": "startx /usr/bin/i3 -- :8 vt$XDG_VTNR",
+      "command": "startx /usr/bin/i3 -- :11 vt$XDG_VTNR",
       "session_type": "x11",
-      "detect_commands": ["/usr/bin/i3"],
-      "install_command": "sudo apt install i3",
-      "description": "Start i3 window manager on a dedicated Xorg server"
+      "detect_commands": ["i3"],
+      "install_command": "sudo pacman -S --needed i3-wm",
+      "install_extras": [
+        {
+          "name": "i3status & dmenu",
+          "command": "sudo pacman -S --needed i3status dmenu"
+        }
+      ],
+      "uninstall_command": "sudo pacman -Rns i3-wm",
+      "uninstall_extras": [
+        {
+          "name": "Remove i3status & dmenu",
+          "command": "sudo pacman -Rns i3status dmenu"
+        }
+      ],
+      "description": "Popular tiling window manager"
+    },
+    {
+      "name": "bspwm",
+      "command": "startx /usr/bin/bspwm -- :12 vt$XDG_VTNR",
+      "session_type": "x11",
+      "detect_commands": ["bspwm"],
+      "install_command": "sudo pacman -S --needed bspwm",
+      "install_extras": [
+        {
+          "name": "sxhkd",
+          "command": "sudo pacman -S --needed sxhkd"
+        }
+      ],
+      "uninstall_command": "sudo pacman -Rns bspwm",
+      "uninstall_extras": [
+        {
+          "name": "Remove sxhkd",
+          "command": "sudo pacman -Rns sxhkd"
+        }
+      ],
+      "description": "Binary space partitioning WM"
+    },
+    {
+      "name": "Awesome",
+      "command": "startx /usr/bin/awesome -- :13 vt$XDG_VTNR",
+      "session_type": "x11",
+      "detect_commands": ["awesome"],
+      "install_command": "sudo pacman -S --needed awesome",
+      "install_extras": [
+        {
+          "name": "Rofi & Picom",
+          "command": "sudo pacman -S --needed rofi picom"
+        }
+      ],
+      "uninstall_command": "sudo pacman -Rns awesome",
+      "uninstall_extras": [
+        {
+          "name": "Remove Rofi & Picom",
+          "command": "sudo pacman -Rns rofi picom"
+        }
+      ],
+      "description": "Lua-configurable tiling WM"
+    },
+    {
+      "name": "Qtile",
+      "command": "startx /usr/bin/qtile start -- :14 vt$XDG_VTNR",
+      "session_type": "x11",
+      "detect_commands": ["qtile"],
+      "install_command": "sudo pacman -S --needed qtile",
+      "install_extras": [
+        {
+          "name": "Qtile Extras",
+          "command": "sudo pacman -S --needed qtile-extras"
+        }
+      ],
+      "uninstall_command": "sudo pacman -Rns qtile",
+      "uninstall_extras": [
+        {
+          "name": "Remove Qtile Extras",
+          "command": "sudo pacman -Rns qtile-extras"
+        }
+      ],
+      "description": "Python-powered tiling WM"
+    },
+    {
+      "name": "Openbox",
+      "command": "startx /usr/bin/openbox-session -- :15 vt$XDG_VTNR",
+      "session_type": "x11",
+      "detect_commands": ["openbox"],
+      "install_command": "sudo pacman -S --needed openbox",
+      "install_extras": [
+        {
+          "name": "Obconf & Tint2",
+          "command": "sudo pacman -S --needed obconf tint2"
+        }
+      ],
+      "uninstall_command": "sudo pacman -Rns openbox",
+      "uninstall_extras": [
+        {
+          "name": "Remove Obconf & Tint2",
+          "command": "sudo pacman -Rns obconf tint2"
+        }
+      ],
+      "description": "Stacking window manager"
+    },
+    {
+      "name": "IceWM",
+      "command": "startx /usr/bin/icewm-session -- :16 vt$XDG_VTNR",
+      "session_type": "x11",
+      "detect_commands": ["icewm-session"],
+      "install_command": "sudo pacman -S --needed icewm",
+      "install_extras": [
+        {
+          "name": "IceWM Extras",
+          "command": "sudo pacman -S --needed icewm-themes"
+        }
+      ],
+      "uninstall_command": "sudo pacman -Rns icewm",
+      "uninstall_extras": [
+        {
+          "name": "Remove IceWM Extras",
+          "command": "sudo pacman -Rns icewm-themes"
+        }
+      ],
+      "description": "Lightweight stacking WM"
+    },
+    {
+      "name": "Fluxbox",
+      "command": "startx /usr/bin/startfluxbox -- :17 vt$XDG_VTNR",
+      "session_type": "x11",
+      "detect_commands": ["startfluxbox"],
+      "install_command": "sudo pacman -S --needed fluxbox",
+      "uninstall_command": "sudo pacman -Rns fluxbox",
+      "description": "Fluxbox stacking window manager"
+    },
+    {
+      "name": "Xmonad",
+      "command": "startx /usr/bin/xmonad -- :18 vt$XDG_VTNR",
+      "session_type": "x11",
+      "detect_commands": ["xmonad"],
+      "install_command": "sudo pacman -S --needed xmonad xmonad-contrib",
+      "install_extras": [
+        {
+          "name": "Xmobar",
+          "command": "sudo pacman -S --needed xmobar"
+        }
+      ],
+      "uninstall_command": "sudo pacman -Rns xmonad xmonad-contrib",
+      "uninstall_extras": [
+        {
+          "name": "Remove Xmobar",
+          "command": "sudo pacman -Rns xmobar"
+        }
+      ],
+      "description": "Haskell tiling WM"
     }
   ]
 }

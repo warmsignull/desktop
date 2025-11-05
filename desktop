@@ -48,15 +48,6 @@ class ConfigError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class InstallExtra:
-    """Represents an optional extra command that can accompany an install."""
-
-    name: str
-    command: str
-    description: Optional[str] = None
-
-
-@dataclass(frozen=True)
 class DesktopEntry:
     """In-memory representation of a desktop environment option."""
 
@@ -65,7 +56,18 @@ class DesktopEntry:
     session_type: str
     detect_commands: Tuple[str, ...] = ()
     install_command: Optional[str] = None
-    install_extras: Tuple[InstallExtra, ...] = ()
+    install_extras: Tuple["CommandExtra", ...] = ()
+    uninstall_command: Optional[str] = None
+    uninstall_extras: Tuple["CommandExtra", ...] = ()
+    description: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class CommandExtra:
+    """Represents an optional extra command that can accompany install/uninstall."""
+
+    name: str
+    command: str
     description: Optional[str] = None
 
 
@@ -147,7 +149,9 @@ def load_config(path: Path) -> List[DesktopEntry]:
         session_type = item.get("session_type")
         raw_detect_commands = item.get("detect_commands")
         raw_install_command = item.get("install_command")
+        raw_uninstall_command = item.get("uninstall_command")
         raw_install_extras = item.get("install_extras")
+        raw_uninstall_extras = item.get("uninstall_extras")
 
         if not isinstance(name, str) or not name.strip():
             raise ConfigError(
@@ -193,14 +197,14 @@ def load_config(path: Path) -> List[DesktopEntry]:
                 )
             install_command = raw_install_command.strip()
 
-        install_extras: Tuple[InstallExtra, ...] = ()
+        install_extras: Tuple[CommandExtra, ...] = ()
         if raw_install_extras is not None:
             if not isinstance(raw_install_extras, list):
                 raise ConfigError(
                     f"Entry '{name}' in {path} has invalid 'install_extras'. "
                     "It must be a list of objects with 'name' and 'command'."
                 )
-            extras: List[InstallExtra] = []
+            extras: List[CommandExtra] = []
             for extra_idx, extra in enumerate(raw_install_extras, start=1):
                 if not isinstance(extra, dict):
                     raise ConfigError(
@@ -226,13 +230,63 @@ def load_config(path: Path) -> List[DesktopEntry]:
                         "string description when provided."
                     )
                 extras.append(
-                    InstallExtra(
+                    CommandExtra(
                         name=extra_name.strip(),
                         command=extra_command.strip(),
                         description=extra_description,
                     )
                 )
             install_extras = tuple(extras)
+
+        uninstall_command: Optional[str] = None
+        if raw_uninstall_command is not None:
+            if not isinstance(raw_uninstall_command, str) or not raw_uninstall_command.strip():
+                raise ConfigError(
+                    f"Entry '{name}' in {path} has an invalid 'uninstall_command'. "
+                    "It must be a non-empty string when provided."
+                )
+            uninstall_command = raw_uninstall_command.strip()
+
+        uninstall_extras: Tuple[CommandExtra, ...] = ()
+        if raw_uninstall_extras is not None:
+            if not isinstance(raw_uninstall_extras, list):
+                raise ConfigError(
+                    f"Entry '{name}' in {path} has invalid 'uninstall_extras'. "
+                    "It must be a list of objects with 'name' and 'command'."
+                )
+            extras: List[CommandExtra] = []
+            for extra_idx, extra in enumerate(raw_uninstall_extras, start=1):
+                if not isinstance(extra, dict):
+                    raise ConfigError(
+                        f"Entry '{name}' in {path} has an uninstall extra at position "
+                        f"{extra_idx} that is not an object."
+                    )
+                extra_name = extra.get("name")
+                extra_command = extra.get("command")
+                extra_description = extra.get("description")
+                if not isinstance(extra_name, str) or not extra_name.strip():
+                    raise ConfigError(
+                        f"Entry '{name}' in {path} has an uninstall extra at position "
+                        f"{extra_idx} with an invalid 'name'."
+                    )
+                if not isinstance(extra_command, str) or not extra_command.strip():
+                    raise ConfigError(
+                        f"Entry '{name}' in {path} has an uninstall extra '{extra_name}' "
+                        "with an invalid 'command'. It must be a non-empty string."
+                    )
+                if extra_description is not None and not isinstance(extra_description, str):
+                    raise ConfigError(
+                        f"Uninstall extra '{extra_name}' in entry '{name}' must have a "
+                        "string description when provided."
+                    )
+                extras.append(
+                    CommandExtra(
+                        name=extra_name.strip(),
+                        command=extra_command.strip(),
+                        description=extra_description,
+                    )
+                )
+            uninstall_extras = tuple(extras)
 
         normalized_session_type = normalize_session_type(session_type, command, name, path)
 
@@ -244,6 +298,8 @@ def load_config(path: Path) -> List[DesktopEntry]:
                 detect_commands=detect_commands,
                 install_command=install_command,
                 install_extras=install_extras,
+                uninstall_command=uninstall_command,
+                uninstall_extras=uninstall_extras,
                 description=description,
             )
         )
@@ -481,15 +537,42 @@ def build_install_rows(
     detection_map: Dict[str, bool],
 ) -> tuple[List[dict], List[DesktopEntry], List[int]]:
     filtered = filter_desktops(desktops, filter_mode)
-    installable = [entry for entry in filtered if entry.install_command]
+    installed_names = {
+        entry.name for entry in filtered if detection_map.get(entry.name, False)
+    }
 
-    missing = [entry for entry in installable if not detection_map.get(entry.name, False)]
-    already = [entry for entry in installable if detection_map.get(entry.name, False)]
-    no_install_data = [entry for entry in filtered if not entry.install_command]
+    install_candidates = [entry for entry in filtered if entry.install_command]
+    missing = [entry for entry in install_candidates if entry.name not in installed_names]
+
+    installed_with_install = [
+        entry for entry in install_candidates if entry.name in installed_names
+    ]
+
+    uninstall_candidates = [
+        entry for entry in filtered
+        if entry.uninstall_command and entry.name in installed_names
+    ]
+
+    already_can_uninstall: List[DesktopEntry] = []
+    seen_uninstall = set()
+    for entry in installed_with_install + uninstall_candidates:
+        if entry.name not in seen_uninstall:
+            already_can_uninstall.append(entry)
+            seen_uninstall.add(entry.name)
+
+    already_no_uninstall = [
+        entry for entry in filtered
+        if entry.name in installed_names and entry.name not in seen_uninstall
+    ]
+
+    no_install_data = [
+        entry for entry in filtered if not entry.install_command
+    ]
 
     display_rows: List[dict] = []
     flat_entries: List[DesktopEntry] = []
     selectable_indices: List[int] = []
+    added_names: Set[str] = set()
 
     display_rows.append({"type": "header", "text": "Ready to Install"})
     if missing:
@@ -503,21 +586,34 @@ def build_install_rows(
             )
             selectable_indices.append(len(display_rows) - 1)
             flat_entries.append(entry)
+            added_names.add(entry.name)
     else:
         display_rows.append({"type": "info", "text": "  (nothing to install)", "attr": curses.A_DIM})
 
-    display_rows.append({"type": "header", "text": "Already Installed"})
-    if already:
-        for entry in already:
+    display_rows.append({"type": "header", "text": "Installed (Uninstall Available)"})
+    if already_can_uninstall:
+        for entry in already_can_uninstall:
             fav_mark = "*" if entry.name in favourites else " "
             session_label = entry.session_type.upper()
-            extras_flag = " +extras" if entry.install_extras else ""
-            line = f"[OK] {fav_mark} {entry.name} [{session_label}]{extras_flag}"
+            extras_flag = " +extras" if entry.uninstall_extras else ""
+            line = f"[UNINSTALL] {fav_mark} {entry.name} [{session_label}]{extras_flag}"
             display_rows.append(
                 {"type": "entry", "entry": entry, "text": line, "attr": curses.A_NORMAL}
             )
-            selectable_indices.append(len(display_rows) - 1)
-            flat_entries.append(entry)
+            if entry.name not in added_names:
+                selectable_indices.append(len(display_rows) - 1)
+                flat_entries.append(entry)
+                added_names.add(entry.name)
+    else:
+        display_rows.append({"type": "info", "text": "  (none)", "attr": curses.A_DIM})
+
+    display_rows.append({"type": "header", "text": "Installed (No Uninstall Command)"})
+    if already_no_uninstall:
+        for entry in already_no_uninstall:
+            fav_mark = "*" if entry.name in favourites else " "
+            session_label = entry.session_type.upper()
+            line = f"[OK] {fav_mark} {entry.name} [{session_label}]"
+            display_rows.append({"type": "info", "text": line, "attr": curses.A_DIM})
     else:
         display_rows.append({"type": "info", "text": "  (none)", "attr": curses.A_DIM})
 
@@ -562,7 +658,8 @@ def format_help_lines(
     config_path: Path,
     filter_mode: str,
     active_screen: str,
-    install_command: Optional[str] = None,
+    selected_entry: Optional[DesktopEntry],
+    is_installed: bool,
 ) -> List[str]:
     filter_label = FILTER_LABELS.get(filter_mode, filter_mode.title())
     lines = [
@@ -573,23 +670,31 @@ def format_help_lines(
         lines.append("Enter: launch selected desktop    d: refresh detection status")
     elif active_screen == "install":
         lines.append(
-            "Enter: confirm install, then choose optional extras    d: refresh detection status"
+            "Enter: install missing desktop    u: uninstall selected desktop (when available)    d: refresh detection status"
         )
-        if install_command:
-            lines.append(f"Install command: {install_command}")
+        if selected_entry:
+            if not is_installed and selected_entry.install_command:
+                lines.append(f"Install command: {selected_entry.install_command}")
+            if is_installed and selected_entry.uninstall_command:
+                lines.append(f"Uninstall command: {selected_entry.uninstall_command}")
     else:
         lines.append("Enter: launch selected desktop")
     lines.append(f"Config: {config_path}")
     return lines
 
 
-def prompt_install_confirmation(
-    stdscr: "curses._CursesWindow", entry: DesktopEntry
+def prompt_action_confirmation(
+    stdscr: "curses._CursesWindow",
+    entry: DesktopEntry,
+    action: str,
+    command: Optional[str],
 ) -> bool:
+    action_title = action.title()
+    command_text = command or "(none)"
     confirm_lines = [
-        f"Install '{entry.name}'?",
-        f"Command: {entry.install_command}",
-        "Run install command? (y/n)",
+        f"{action_title} '{entry.name}'?",
+        f"Command: {command_text}",
+        f"Run {action} command? (y/n)",
     ]
     height, width = stdscr.getmaxyx()
     start_row = max(0, height - len(confirm_lines) - 2)
@@ -609,28 +714,32 @@ def prompt_install_confirmation(
             return False
 
 
-def prompt_optional_extras(entry: DesktopEntry) -> List[InstallExtra]:
-    extras = list(entry.install_extras)
-    if not extras:
+def prompt_optional_commands(
+    action_label: str, extras: Sequence[CommandExtra]
+) -> List[CommandExtra]:
+    options = list(extras)
+    if not options:
         return []
 
-    print("Optional extras available:")
-    for idx, extra in enumerate(extras, start=1):
+    print(f"Optional extras available for {action_label}:")
+    for idx, extra in enumerate(options, start=1):
         summary = f"{idx}. {extra.name}"
         if extra.description:
             summary = f"{summary} — {extra.description}"
         print(summary)
         print(f"   Command: {extra.command}")
 
+    prompt_text = (
+        "Select extras to run (comma separated numbers, 'all' for all, blank for none): "
+    )
+
     while True:
-        response = input(
-            "Select extras to install (comma separated numbers, 'all' for all, blank for none): "
-        ).strip()
+        response = input(prompt_text).strip()
         if not response:
             return []
         if response.lower() == "all":
-            return extras
-        selected: List[InstallExtra] = []
+            return options
+        selected: List[CommandExtra] = []
         tokens = [token.strip() for token in response.split(",") if token.strip()]
         invalid = False
         for token in tokens:
@@ -639,13 +748,13 @@ def prompt_optional_extras(entry: DesktopEntry) -> List[InstallExtra]:
                 invalid = True
                 break
             index = int(token)
-            if index < 1 or index > len(extras):
+            if index < 1 or index > len(options):
                 print(f"Selection {index} is out of range.")
                 invalid = True
                 break
-            selected_extra = extras[index - 1]
-            if selected_extra not in selected:
-                selected.append(selected_extra)
+            extra = options[index - 1]
+            if extra not in selected:
+                selected.append(extra)
         if not invalid:
             return selected
 
@@ -659,19 +768,30 @@ def run_shell_command(command: str) -> int:
         return -1
 
 
-def perform_install(entry: DesktopEntry) -> None:
+def perform_entry_action(entry: DesktopEntry, action: str) -> None:
     clear_terminal()
-    print(f"Ready to install '{entry.name}'.")
-    selected_extras = prompt_optional_extras(entry)
+    action = action.lower()
+    if action not in {"install", "uninstall"}:
+        raise ValueError(f"Unsupported action '{action}'")
 
-    if entry.install_command:
-        exit_code = run_shell_command(entry.install_command)
-        print(f"Install command exited with code {exit_code}.")
+    if action == "install":
+        primary_command = entry.install_command
+        extras = entry.install_extras
     else:
-        print("No primary install command configured.")
+        primary_command = entry.uninstall_command
+        extras = entry.uninstall_extras
+
+    print(f"Ready to {action} '{entry.name}'.")
+    selected_extras = prompt_optional_commands(action, extras)
+
+    if primary_command:
+        exit_code = run_shell_command(primary_command)
+        print(f"{action.title()} command exited with code {exit_code}.")
+    else:
+        print(f"No primary {action} command configured.")
 
     for extra in selected_extras:
-        print(f"\nInstalling optional extra '{extra.name}'...")
+        print(f"\nRunning optional extra '{extra.name}'...")
         exit_code = run_shell_command(extra.command)
         print(f"Extra '{extra.name}' command exited with code {exit_code}.")
 
@@ -747,11 +867,16 @@ def curses_main(
         stdscr.addstr(2, 0, nav_line[:width], curses.A_BOLD)
 
         list_start = 4
-        install_command_display = (
-            flat_entries[selected_idx].install_command if active_screen == "install" and flat_entries else None
-        )
+        selected_entry = flat_entries[selected_idx] if flat_entries else None
+        is_installed = False
+        if active_screen in {"detected", "install"} and selected_entry is not None:
+            is_installed = detection_map.get(selected_entry.name, False)
         help_lines = format_help_lines(
-            config_path, filter_mode, active_screen, install_command_display
+            config_path,
+            filter_mode,
+            active_screen,
+            selected_entry,
+            is_installed,
         )
         for i, line in enumerate(help_lines, start=height - len(help_lines)):
             if 0 <= i < height:
@@ -841,9 +966,14 @@ def curses_main(
         elif key in (curses.KEY_ENTER, 10, 13) and flat_entries:
             entry = flat_entries[selected_idx]
             if active_screen == "install":
+                entry_installed = detection_map.get(entry.name, False)
+                if entry_installed:
+                    continue
                 if not entry.install_command:
                     continue
-                confirmed = prompt_install_confirmation(stdscr, entry)
+                confirmed = prompt_action_confirmation(
+                    stdscr, entry, "install", entry.install_command
+                )
                 if confirmed:
                     return LauncherResult(kind="install", entry=entry)
             else:
@@ -859,6 +989,14 @@ def curses_main(
             else:
                 favourites.add(current.name)
             state["anchor_name"] = current.name
+        elif key in (ord("u"), ord("U")) and flat_entries and active_screen == "install":
+            entry = flat_entries[selected_idx]
+            if detection_map.get(entry.name, False) and entry.uninstall_command:
+                confirmed = prompt_action_confirmation(
+                    stdscr, entry, "uninstall", entry.uninstall_command
+                )
+                if confirmed:
+                    return LauncherResult(kind="uninstall", entry=entry)
         elif key in (ord("s"), ord("S")):
             if flat_entries:
                 state["anchor_name"] = flat_entries[selected_idx].name
@@ -1002,7 +1140,15 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             entry = result.entry
             if not entry or not entry.install_command:
                 continue
-            perform_install(entry)
+            perform_entry_action(entry, "install")
+            detection_map = detect_desktops(desktops)
+            continue
+
+        if result.kind == "uninstall":
+            entry = result.entry
+            if not entry or not entry.uninstall_command:
+                continue
+            perform_entry_action(entry, "uninstall")
             detection_map = detect_desktops(desktops)
             continue
 
