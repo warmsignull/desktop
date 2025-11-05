@@ -23,6 +23,9 @@ scrollable list, and replaces itself with the selected desktop command.
      installed desktop from the Install screen.
    - `uninstall_extras` (optional): Additional commands offered after the
      uninstall completes.
+   - `show_in_configured` (optional, default `true`): Set to `false` to hide the
+     entry from the Configured screen while keeping it available for detection
+     and install workflows.
    - `description` (optional): Short blurb displayed next to the name.
 
 Use `desktop_launcher.sample.json` as a template:
@@ -105,7 +108,7 @@ Run `desktop` from any terminal. The launcher offers three screens:
 Key bindings:
 
 - `↑`/`↓` or `k`/`j`: Move the selection.
-- `Enter`: Launch the highlighted desktop (Configured/Detect) or confirm and run the install command, then choose optional extras (Install).
+- `Enter`: Launch the highlighted desktop (Configured/Detect) or open the desktop menu to pick extras and run install/uninstall (Install).
 - `u`: Uninstall the selected desktop (Install screen) and optionally remove extras.
 - `f`: Mark or unmark the selection as a favourite (persisted between runs).
 - `s`: Cycle the session filter (`All → X11 → Wayland`).

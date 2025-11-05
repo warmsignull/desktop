@@ -76,8 +76,9 @@ class CommandExtra:
 class LauncherResult:
     """Represents the outcome selected in the launcher UI."""
 
-    kind: str  # "launch", "install", "exit"
+    kind: str  # "launch", "install", "uninstall", "exit"
     entry: Optional[DesktopEntry] = None
+    extras: Tuple[CommandExtra, ...] = ()
 
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
@@ -686,7 +687,7 @@ def format_help_lines(
         lines.append("Enter: launch selected desktop    d: refresh detection status")
     elif active_screen == "install":
         lines.append(
-            "Enter: install missing desktop    u: uninstall selected desktop (when available)    d: refresh detection status"
+            "Enter: open desktop menu (install & extras)    u: uninstall via menu    d: refresh detection status"
         )
         if selected_entry:
             if not is_installed and selected_entry.install_command:
@@ -699,80 +700,107 @@ def format_help_lines(
     return lines
 
 
-def prompt_action_confirmation(
-    stdscr: "curses._CursesWindow",
-    entry: DesktopEntry,
-    action: str,
-    command: Optional[str],
-) -> bool:
-    action_title = action.title()
-    command_text = command or "(none)"
-    confirm_lines = [
-        f"{action_title} '{entry.name}'?",
-        f"Command: {command_text}",
-        f"Run {action} command? (y/n)",
-    ]
-    height, width = stdscr.getmaxyx()
-    start_row = max(0, height - len(confirm_lines) - 2)
+def action_detail_menu(
+    stdscr: "curses._CursesWindow", entry: DesktopEntry, action: str
+) -> Tuple[bool, Tuple[CommandExtra, ...]]:
+    action = action.lower()
+    if action not in {"install", "uninstall"}:
+        raise ValueError(f"Unsupported action '{action}'")
 
-    for offset, text in enumerate(confirm_lines):
-        line = text if text else ""
-        stdscr.addstr(start_row + offset, 0, " " * width)
-        attr = curses.A_BOLD if offset == 0 else curses.A_NORMAL
-        stdscr.addstr(start_row + offset, 0, line[:width], attr)
-    stdscr.refresh()
+    if action == "install":
+        command = entry.install_command
+        extras = entry.install_extras
+    else:
+        command = entry.uninstall_command
+        extras = entry.uninstall_extras
+
+    selected: Set[int] = set()
+    run_index = len(extras)
+    cancel_index = len(extras) + 1
+    total_items = cancel_index + 1
+    cursor = 0 if extras else run_index
 
     while True:
+        stdscr.erase()
+        height, width = stdscr.getmaxyx()
+
+        title = f"{action.title()} {entry.name}"
+        command_text = command or "(none)"
+        instructions = "Space: toggle extras    Enter: run    Esc/q: cancel    ↑/↓: navigate"
+        if not extras:
+            instructions = "Enter: run    Esc/q: cancel"
+
+        stdscr.addstr(0, 0, title[:width], curses.A_BOLD)
+        stdscr.addstr(1, 0, f"Command: {command_text}"[:width])
+        stdscr.addstr(2, 0, instructions[:width], curses.A_DIM)
+
+        row = 4
+        if extras:
+            stdscr.addstr(row, 0, "Extras:", curses.A_BOLD)
+            row += 1
+            for idx, extra in enumerate(extras):
+                mark = "[x]" if idx in selected else "[ ]"
+                line = f"{mark} {extra.name}"
+                if extra.description:
+                    suffix = f" — {extra.description}"
+                    available = max(0, width - len(line) - 1)
+                    line = f"{line} {suffix[:available]}"
+                attr = curses.A_REVERSE if cursor == idx else curses.A_NORMAL
+                stdscr.addstr(row, 0, line[:width], attr)
+                row += 1
+        else:
+            stdscr.addstr(row, 0, "No extras available.", curses.A_DIM)
+            row += 1
+
+        run_attr = curses.A_BOLD
+        if cursor == run_index:
+            run_attr |= curses.A_REVERSE
+        stdscr.addstr(row, 0, "Run"[:width], run_attr)
+        row += 1
+
+        cancel_attr = curses.A_NORMAL
+        if cursor == cancel_index:
+            cancel_attr |= curses.A_REVERSE
+        stdscr.addstr(row, 0, "Cancel"[:width], cancel_attr)
+
+        detail_line = ""
+        if cursor < len(extras):
+            detail_line = extras[cursor].command
+        stdscr.addstr(height - 1, 0, " " * width)
+        if detail_line:
+            stdscr.addstr(
+                height - 1,
+                0,
+                f"Extra command: {detail_line}"[:width],
+                curses.A_DIM,
+            )
+
+        stdscr.refresh()
+
         key = stdscr.getch()
-        if key in (ord("y"), ord("Y")):
-            return True
-        if key in (ord("n"), ord("N"), 27):
-            return False
-
-
-def prompt_optional_commands(
-    action_label: str, extras: Sequence[CommandExtra]
-) -> List[CommandExtra]:
-    options = list(extras)
-    if not options:
-        return []
-
-    print(f"Optional extras available for {action_label}:")
-    for idx, extra in enumerate(options, start=1):
-        summary = f"{idx}. {extra.name}"
-        if extra.description:
-            summary = f"{summary} — {extra.description}"
-        print(summary)
-        print(f"   Command: {extra.command}")
-
-    prompt_text = (
-        "Select extras to run (comma separated numbers, 'all' for all, blank for none): "
-    )
-
-    while True:
-        response = input(prompt_text).strip()
-        if not response:
-            return []
-        if response.lower() == "all":
-            return options
-        selected: List[CommandExtra] = []
-        tokens = [token.strip() for token in response.split(",") if token.strip()]
-        invalid = False
-        for token in tokens:
-            if not token.isdigit():
-                print(f"Invalid selection '{token}'. Enter numbers or 'all'.")
-                invalid = True
-                break
-            index = int(token)
-            if index < 1 or index > len(options):
-                print(f"Selection {index} is out of range.")
-                invalid = True
-                break
-            extra = options[index - 1]
-            if extra not in selected:
-                selected.append(extra)
-        if not invalid:
-            return selected
+        if key in (curses.KEY_UP, ord("k"), ord("K")):
+            cursor = (cursor - 1) % total_items
+        elif key in (curses.KEY_DOWN, ord("j"), ord("J")):
+            cursor = (cursor + 1) % total_items
+        elif key in (ord(" "),):
+            if cursor < len(extras):
+                if cursor in selected:
+                    selected.remove(cursor)
+                else:
+                    selected.add(cursor)
+        elif key in (curses.KEY_ENTER, 10, 13):
+            if cursor < len(extras):
+                if cursor in selected:
+                    selected.remove(cursor)
+                else:
+                    selected.add(cursor)
+            elif cursor == run_index:
+                chosen = tuple(extras[idx] for idx in sorted(selected))
+                return True, chosen
+            else:
+                return False, tuple()
+        elif key in (27, ord("q"), ord("Q")):
+            return False, tuple()
 
 
 def run_shell_command(command: str) -> int:
@@ -784,29 +812,25 @@ def run_shell_command(command: str) -> int:
         return -1
 
 
-def perform_entry_action(entry: DesktopEntry, action: str) -> None:
+def perform_entry_action(
+    entry: DesktopEntry, action: str, extras: Sequence[CommandExtra]
+) -> None:
     clear_terminal()
     action = action.lower()
     if action not in {"install", "uninstall"}:
         raise ValueError(f"Unsupported action '{action}'")
 
-    if action == "install":
-        primary_command = entry.install_command
-        extras = entry.install_extras
-    else:
-        primary_command = entry.uninstall_command
-        extras = entry.uninstall_extras
+    command = entry.install_command if action == "install" else entry.uninstall_command
 
     print(f"Ready to {action} '{entry.name}'.")
-    selected_extras = prompt_optional_commands(action, extras)
 
-    if primary_command:
-        exit_code = run_shell_command(primary_command)
+    if command:
+        exit_code = run_shell_command(command)
         print(f"{action.title()} command exited with code {exit_code}.")
     else:
         print(f"No primary {action} command configured.")
 
-    for extra in selected_extras:
+    for extra in extras:
         print(f"\nRunning optional extra '{extra.name}'...")
         exit_code = run_shell_command(extra.command)
         print(f"Extra '{extra.name}' command exited with code {exit_code}.")
@@ -983,15 +1007,18 @@ def curses_main(
             entry = flat_entries[selected_idx]
             if active_screen == "install":
                 entry_installed = detection_map.get(entry.name, False)
-                if entry_installed:
+                state["retain_offset"] = selected_row_index - top_row if selected_row_index is not None else None
+                state["anchor_name"] = entry.name
+                if entry_installed and entry.uninstall_command:
+                    confirmed, extras = action_detail_menu(stdscr, entry, "uninstall")
+                    if confirmed:
+                        return LauncherResult(kind="uninstall", entry=entry, extras=extras)
                     continue
-                if not entry.install_command:
-                    continue
-                confirmed = prompt_action_confirmation(
-                    stdscr, entry, "install", entry.install_command
-                )
-                if confirmed:
-                    return LauncherResult(kind="install", entry=entry)
+                if not entry_installed and entry.install_command:
+                    confirmed, extras = action_detail_menu(stdscr, entry, "install")
+                    if confirmed:
+                        return LauncherResult(kind="install", entry=entry, extras=extras)
+                continue
             else:
                 return LauncherResult(kind="launch", entry=entry)
         elif key in (ord("q"), ord("Q"), 27):
@@ -1008,11 +1035,11 @@ def curses_main(
         elif key in (ord("u"), ord("U")) and flat_entries and active_screen == "install":
             entry = flat_entries[selected_idx]
             if detection_map.get(entry.name, False) and entry.uninstall_command:
-                confirmed = prompt_action_confirmation(
-                    stdscr, entry, "uninstall", entry.uninstall_command
-                )
+                state["retain_offset"] = selected_row_index - top_row if selected_row_index is not None else None
+                state["anchor_name"] = entry.name
+                confirmed, extras = action_detail_menu(stdscr, entry, "uninstall")
                 if confirmed:
-                    return LauncherResult(kind="uninstall", entry=entry)
+                    return LauncherResult(kind="uninstall", entry=entry, extras=extras)
         elif key in (ord("s"), ord("S")):
             if flat_entries:
                 state["anchor_name"] = flat_entries[selected_idx].name
@@ -1152,19 +1179,11 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             clear_terminal()
             break
 
-        if result.kind == "install":
+        if result.kind in {"install", "uninstall"}:
             entry = result.entry
-            if not entry or not entry.install_command:
+            if not entry:
                 continue
-            perform_entry_action(entry, "install")
-            detection_map = detect_desktops(desktops)
-            continue
-
-        if result.kind == "uninstall":
-            entry = result.entry
-            if not entry or not entry.uninstall_command:
-                continue
-            perform_entry_action(entry, "uninstall")
+            perform_entry_action(entry, result.kind, result.extras)
             detection_map = detect_desktops(desktops)
             continue
 
