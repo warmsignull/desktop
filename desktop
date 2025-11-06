@@ -850,23 +850,23 @@ def options_screen(
         height, width = stdscr.getmaxyx()
 
         nav_line = format_screen_nav("options")
-        stdscr.addstr(0, 0, nav_line[:width], curses.A_BOLD)
+        safe_addstr(stdscr, 0, 0, nav_line, curses.A_BOLD)
 
-        stdscr.addstr(1, 0, "Options", curses.A_BOLD)
+        safe_addstr(stdscr, 1, 0, "Options", curses.A_BOLD)
         detected_label = package_manager_label(package_state.get("detected"))
         override_label = package_manager_label(package_state.get("override"))
         effective_label = package_manager_label(package_state.get("effective"))
-        stdscr.addstr(2, 0, f"Detected:  {detected_label}"[:width])
-        stdscr.addstr(3, 0, f"Override:  {override_label}"[:width])
-        stdscr.addstr(4, 0, f"Effective: {effective_label}"[:width])
+        safe_addstr(stdscr, 2, 0, f"Detected:  {detected_label}")
+        safe_addstr(stdscr, 3, 0, f"Override:  {override_label}")
+        safe_addstr(stdscr, 4, 0, f"Effective: {effective_label}")
 
         instructions = (
             "Enter: set override    r: re-detect    q: quit    ←/h or →/l / 1/2/3/4: switch screen"
         )
-        stdscr.addstr(6, 0, instructions[:width], curses.A_DIM)
-        stdscr.addstr(7, 0, f"Config: {config_path}"[:width], curses.A_DIM)
+        safe_addstr(stdscr, 6, 0, instructions, curses.A_DIM)
+        safe_addstr(stdscr, 7, 0, f"Config: {config_path}", curses.A_DIM)
 
-        stdscr.addstr(9, 0, "Package manager:", curses.A_BOLD)
+        safe_addstr(stdscr, 9, 0, "Package manager:", curses.A_BOLD)
         for idx, (key, label) in enumerate(choices):
             row = 10 + idx
             is_selected = idx == cursor
@@ -880,12 +880,12 @@ def options_screen(
                 full_label = f"Auto (use detected: {detected_label})"
             line = f"{mark} {full_label}"
             attr = curses.A_REVERSE if is_selected else curses.A_NORMAL
-            stdscr.addstr(row, 0, line[:width], attr)
+            safe_addstr(stdscr, row, 0, line, attr)
 
         if status_message:
-            stdscr.addstr(height - 2, 0, " " * width)
-            stdscr.addstr(height - 2, 0, status_message[:width], curses.A_BOLD)
-        stdscr.addstr(height - 1, 0, " " * width)
+            safe_addstr(stdscr, height - 2, 0, " " * width)
+            safe_addstr(stdscr, height - 2, 0, status_message, curses.A_BOLD)
+        safe_addstr(stdscr, height - 1, 0, " " * width)
 
         stdscr.refresh()
 
@@ -1040,13 +1040,13 @@ def action_detail_menu(
         if not extras:
             instructions = "Enter: run    Esc/q: cancel"
 
-        stdscr.addstr(0, 0, title[:width], curses.A_BOLD)
-        stdscr.addstr(1, 0, f"Command: {command_text}"[:width])
-        stdscr.addstr(2, 0, instructions[:width], curses.A_DIM)
+        safe_addstr(stdscr, 0, 0, title, curses.A_BOLD)
+        safe_addstr(stdscr, 1, 0, f"Command: {command_text}")
+        safe_addstr(stdscr, 2, 0, instructions, curses.A_DIM)
 
         row = 4
         if extras:
-            stdscr.addstr(row, 0, "Extras:", curses.A_BOLD)
+            safe_addstr(stdscr, row, 0, "Extras:", curses.A_BOLD)
             row += 1
             for idx, extra in enumerate(extras):
                 available = resolved_extras[idx] is not None
@@ -1061,10 +1061,10 @@ def action_detail_menu(
                 attr = curses.A_REVERSE if cursor == idx else curses.A_NORMAL
                 if not available:
                     attr |= curses.A_DIM
-                stdscr.addstr(row, 0, line[:width], attr)
+                safe_addstr(stdscr, row, 0, line, attr)
                 row += 1
         else:
-            stdscr.addstr(row, 0, "No extras available.", curses.A_DIM)
+            safe_addstr(stdscr, row, 0, "No extras available.", curses.A_DIM)
             row += 1
 
         run_attr = curses.A_BOLD
@@ -1072,28 +1072,23 @@ def action_detail_menu(
             run_attr |= curses.A_REVERSE
         if resolved_primary is None:
             run_attr |= curses.A_DIM
-        stdscr.addstr(row, 0, "Run"[:width], run_attr)
+        safe_addstr(stdscr, row, 0, "Run", run_attr)
         row += 1
 
         cancel_attr = curses.A_NORMAL
         if cursor == cancel_index:
             cancel_attr |= curses.A_REVERSE
-        stdscr.addstr(row, 0, "Cancel"[:width], cancel_attr)
+        safe_addstr(stdscr, row, 0, "Cancel", cancel_attr)
 
         detail_line = ""
         if cursor < len(extras):
             detail_line = resolved_extras[cursor] or "(no command available)"
-        stdscr.addstr(height - 1, 0, " " * width)
+        safe_addstr(stdscr, height - 1, 0, " " * width)
         if detail_line:
-            stdscr.addstr(
-                height - 1,
-                0,
-                f"Extra command: {detail_line}"[:width],
-                curses.A_DIM,
-            )
+            safe_addstr(stdscr, height - 1, 0, f"Extra command: {detail_line}", curses.A_DIM)
         if status_message:
-            stdscr.addstr(height - 2, 0, " " * width)
-            stdscr.addstr(height - 2, 0, status_message[:width], curses.A_BOLD)
+            safe_addstr(stdscr, height - 2, 0, " " * width)
+            safe_addstr(stdscr, height - 2, 0, status_message, curses.A_BOLD)
 
         stdscr.refresh()
 
@@ -1268,10 +1263,10 @@ def curses_main(
         title = "Desktop Launcher"
         subtitle = "Select a desktop environment to start"
 
-        stdscr.addstr(0, 0, title[: width], curses.A_BOLD)
-        stdscr.addstr(1, 0, subtitle[: width])
+        safe_addstr(stdscr, 0, 0, title, curses.A_BOLD)
+        safe_addstr(stdscr, 1, 0, subtitle)
         nav_line = format_screen_nav(active_screen)
-        stdscr.addstr(2, 0, nav_line[:width], curses.A_BOLD)
+        safe_addstr(stdscr, 2, 0, nav_line, curses.A_BOLD)
 
         list_start = 4
         selected_entry = flat_entries[selected_idx] if flat_entries else None
@@ -1288,12 +1283,13 @@ def curses_main(
         )
         for i, line in enumerate(help_lines, start=height - len(help_lines)):
             if 0 <= i < height:
-                stdscr.addstr(i, 0, line[: width], curses.A_DIM)
+                safe_addstr(stdscr, i, 0, line, curses.A_DIM)
 
         list_height = max(0, height - list_start - len(help_lines))
 
         if list_height <= 0:
-            stdscr.addstr(
+            safe_addstr(
+                stdscr,
                 list_start,
                 0,
                 "Terminal window is too small to render the launcher.",
@@ -1337,10 +1333,11 @@ def curses_main(
             attr = row.get("attr", curses.A_NORMAL)
 
             if row_type == "header":
-                stdscr.addstr(
+                safe_addstr(
+                    stdscr,
                     screen_row,
                     0,
-                    text[: width],
+                    text,
                     curses.A_BOLD | curses.A_UNDERLINE,
                 )
             elif row_type == "entry":
@@ -1351,16 +1348,17 @@ def curses_main(
                     available = max(0, width - len(formatted) - 1)
                     formatted = f"{formatted} {suffix[:available]}"
                 if selected_row_index is not None and actual_index == selected_row_index:
-                    stdscr.addstr(
+                    safe_addstr(
+                        stdscr,
                         screen_row,
                         0,
-                        formatted[: width],
+                        formatted,
                         attr | curses.A_REVERSE,
                     )
                 else:
-                    stdscr.addstr(screen_row, 0, formatted[: width], attr)
+                    safe_addstr(stdscr, screen_row, 0, formatted, attr)
             else:
-                stdscr.addstr(screen_row, 0, text[: width], attr)
+                safe_addstr(stdscr, screen_row, 0, text, attr)
 
         stdscr.refresh()
         key = stdscr.getch()
@@ -1538,6 +1536,34 @@ def save_favourites(path: Path, favourites: Set[str]) -> None:
 
 def clear_terminal() -> None:
     os.system("clear")
+
+
+def safe_addstr(
+    window: "curses._CursesWindow",
+    y: int,
+    x: int,
+    text: str,
+    attr: int = curses.A_NORMAL,
+) -> None:
+    """Write text to a curses window, guarding against out-of-bounds errors."""
+    if text is None:
+        return
+    try:
+        height, width = window.getmaxyx()
+    except curses.error:
+        return
+    if y < 0 or y >= height or x < 0 or x >= width:
+        return
+    available = width - x
+    if available <= 0:
+        return
+    trimmed = text[:available]
+    if not trimmed:
+        return
+    try:
+        window.addstr(y, x, trimmed, attr)
+    except curses.error:
+        pass
 
 
 def exec_command(command: str) -> None:
