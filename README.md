@@ -1,8 +1,9 @@
 # Desktop Launcher
 
-`desktop` is a curses-based launcher for desktop environments. It reads from a
-single JSON configuration file, displays the configured options in a
-scrollable list, and replaces itself with the selected desktop command.
+Desktop Launcher is a curses-based terminal UI that loads desktops from JSON,
+lets you mark favourites, launches the selected session, detects installed
+environments, and can run install/uninstall commands (including optional
+extras) using your package manager override. Tested so far on Arch Linux.
 
 ## Configuration
 
@@ -101,11 +102,25 @@ an explicit choice. You can manage the same setting through the Options screen.
 
 ## Installation
 
-1. Copy the `desktop` script to a location on the system-wide `PATH` (for
-   example `/usr/local/bin/desktop`) and make it executable.
-2. Ensure all users have read access to the configuration file.
+### Quick install (uses included scripts)
 
-The script also accepts:
+1. Clone or download this repository.
+2. Run `./install` from the repository root. You will be prompted for root
+   access; the helper scripts copy `desktop` to `/usr/local/bin/desktop` and
+   install the sample configuration to `/etc/desktop_launcher.json`.
+3. Open `/etc/desktop_launcher.json` and tailor the entries to your system.
+
+### Manual install
+
+1. Copy the `desktop` script to a directory on your `PATH` (for example
+   `/usr/local/bin/desktop`) and make it executable (`chmod +x`).
+2. Place a configuration file at `/etc/desktop_launcher.json` (or set
+   `DESKTOP_LAUNCHER_CONFIG` to point elsewhere). You can start from
+   `desktop_launcher.sample.json`.
+3. Adjust permissions so all users that should launch desktops can read the
+   config and execute the script.
+
+### Runtime flags
 
 - `desktop --config /path/to/config.json` – override the config file path.
 - `DESKTOP_LAUNCHER_CONFIG=/path/to/config desktop` – environment override.
