@@ -83,6 +83,22 @@ The sample configuration file in this repository includes a larger Arch-oriented
 set with pre-populated install/uninstall commands—adjust package names to suit
 your distribution.
 
+You can also add an optional top-level `options` object:
+
+```json
+{
+  "options": {
+    "package_manager_override": "apt"
+  },
+  "desktops": [
+    ...
+  ]
+}
+```
+
+The launcher auto-detects the package manager, but this override lets you pin
+an explicit choice. You can manage the same setting through the Options screen.
+
 ## Installation
 
 1. Copy the `desktop` script to a location on the system-wide `PATH` (for
@@ -98,22 +114,24 @@ The script also accepts:
 
 ## Usage
 
-Run `desktop` from any terminal. The launcher offers three screens:
+Run `desktop` from any terminal. The launcher offers four screens:
 
 1. **Configured** – your curated list from the configuration file (favourites appear first).
 2. **Detect** – highlights which configured desktops look installed based on `detect_commands`.
 3. **Install** – shows desktops that expose an `install_command`, allowing you to run the
    command for missing environments directly from the launcher.
+4. **Options** – view the auto-detected package manager, override it, or trigger a fresh detection.
 
 Key bindings:
 
 - `↑`/`↓` or `k`/`j`: Move the selection.
-- `Enter`: Launch the highlighted desktop (Configured/Detect) or open the desktop menu to pick extras and run install/uninstall (Install).
+- `Enter`: Launch the highlighted desktop (Configured/Detect) or open the desktop menu to pick extras and run install/uninstall (Install). In the Options screen it applies the highlighted override.
 - `u`: Uninstall the selected desktop (Install screen) and optionally remove extras.
 - `f`: Mark or unmark the selection as a favourite (persisted between runs).
 - `s`: Cycle the session filter (`All → X11 → Wayland`).
 - `d`: Refresh detection results.
-- `1`, `2`, `3`: Jump between the Configured, Detect, and Install screens.
+- `r`: Re-run package manager detection (Options screen).
+- `1`, `2`, `3`, `4`: Jump between the Configured, Detect, Install, and Options screens.
 - `q`: Quit the launcher (the terminal is cleared on exit).
 
 When a desktop is launched the script executes the associated command via the

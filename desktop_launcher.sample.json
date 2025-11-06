@@ -1,4 +1,7 @@
 {
+  "options": {
+    "package_manager_override": "pacman"
+  },
   "desktops": [
     {
       "name": "GNOME (Wayland)",
@@ -23,12 +26,6 @@
           "name": "Remove GNOME Extra Apps",
           "command": "sudo pacman -Rns gnome-extra"
         },
-        {
-          "name": "Remove GNOME Tweaks",
-          "command": "sudo pacman -Rns gnome-tweaks"
-        }
-      ],
-      "uninstall_extras": [
         {
           "name": "Remove GNOME Tweaks",
           "command": "sudo pacman -Rns gnome-tweaks"

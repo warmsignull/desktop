@@ -816,6 +816,135 @@ def build_install_rows(
     return display_rows, flat_entries, selectable_indices
 
 
+def options_screen(
+    stdscr: "curses._CursesWindow",
+    config_path: Path,
+    package_state: Dict[str, object],
+    save_package_state: Callable[[], None],
+    cursor: int,
+) -> Tuple[Optional[str], int]:
+    choices: List[Tuple[Optional[str], str]] = [
+        (None, "Auto (use detected)")
+    ] + list(SUPPORTED_PACKAGE_MANAGERS)
+
+    def clamp_cursor(value: int) -> int:
+        if not choices:
+            return 0
+        return max(0, min(value, len(choices) - 1))
+
+    if package_state.get("override") is None:
+        cursor = 0
+    else:
+        override = package_state.get("override")
+        for idx, (key, _) in enumerate(choices):
+            if key == override:
+                cursor = idx
+                break
+        else:
+            cursor = clamp_cursor(cursor)
+
+    status_message = ""
+
+    while True:
+        stdscr.erase()
+        height, width = stdscr.getmaxyx()
+
+        nav_line = format_screen_nav("options")
+        stdscr.addstr(0, 0, nav_line[:width], curses.A_BOLD)
+
+        stdscr.addstr(1, 0, "Options", curses.A_BOLD)
+        detected_label = package_manager_label(package_state.get("detected"))
+        override_label = package_manager_label(package_state.get("override"))
+        effective_label = package_manager_label(package_state.get("effective"))
+        stdscr.addstr(2, 0, f"Detected:  {detected_label}"[:width])
+        stdscr.addstr(3, 0, f"Override:  {override_label}"[:width])
+        stdscr.addstr(4, 0, f"Effective: {effective_label}"[:width])
+
+        instructions = (
+            "Enter: set override    r: re-detect    q: quit    1/2/3/4: switch screen"
+        )
+        stdscr.addstr(6, 0, instructions[:width], curses.A_DIM)
+        stdscr.addstr(7, 0, f"Config: {config_path}"[:width], curses.A_DIM)
+
+        stdscr.addstr(9, 0, "Package manager:", curses.A_BOLD)
+        for idx, (key, label) in enumerate(choices):
+            row = 10 + idx
+            is_selected = idx == cursor
+            is_active = (
+                (key is None and package_state.get("override") is None)
+                or (key is not None and key == package_state.get("override"))
+            )
+            mark = "[x]" if is_active else "[ ]"
+            full_label = label
+            if key is None:
+                full_label = f"Auto (use detected: {detected_label})"
+            line = f"{mark} {full_label}"
+            attr = curses.A_REVERSE if is_selected else curses.A_NORMAL
+            stdscr.addstr(row, 0, line[:width], attr)
+
+        if status_message:
+            stdscr.addstr(height - 2, 0, " " * width)
+            stdscr.addstr(height - 2, 0, status_message[:width], curses.A_BOLD)
+        stdscr.addstr(height - 1, 0, " " * width)
+
+        stdscr.refresh()
+
+        key = stdscr.getch()
+
+        if key in (ord("q"), ord("Q")):
+            return "exit", cursor
+        if key == 27:
+            return "exit", cursor
+        if key in (ord("1"), ord("2"), ord("3"), ord("4")):
+            target = SCREEN_SEQUENCE[int(chr(key)) - 1]
+            return target, cursor
+        if key in (curses.KEY_UP, ord("k"), ord("K")):
+            cursor = (cursor - 1) % len(choices)
+            status_message = ""
+            continue
+        if key in (curses.KEY_DOWN, ord("j"), ord("J")):
+            cursor = (cursor + 1) % len(choices)
+            status_message = ""
+            continue
+        if key in (ord("r"), ord("R")):
+            package_state["detected"] = detect_package_manager()
+            package_state["effective"] = compute_effective_package_manager(
+                package_state.get("detected"), package_state.get("override")
+            )
+            status_message = (
+                f"Detected {package_manager_label(package_state.get('detected'))}."
+            )
+            if package_state.get("override") is None:
+                cursor = 0
+            continue
+        if key in (curses.KEY_ENTER, 10, 13):
+            selected_key = choices[cursor][0]
+            new_override = selected_key
+            if new_override == package_state.get("override"):
+                status_message = "Override unchanged."
+                continue
+            package_state["override"] = new_override
+            package_state["effective"] = compute_effective_package_manager(
+                package_state.get("detected"), package_state.get("override")
+            )
+            save_package_state()
+            status_message = (
+                f"Override set to {package_manager_label(package_state['effective'])}."
+            )
+            if package_state.get("override") is None:
+                cursor = 0
+            else:
+                for idx, (key, _) in enumerate(choices):
+                    if key == package_state.get("override"):
+                        cursor = idx
+                        break
+            continue
+
+        # Ignore other keys
+
+    return None, cursor
+
+
 def find_entry_index(entries: List[DesktopEntry], name: str) -> Optional[int]:
     for idx, entry in enumerate(entries):
         if entry.name == name:
@@ -840,11 +969,13 @@ def format_help_lines(
     active_screen: str,
     selected_entry: Optional[DesktopEntry],
     is_installed: bool,
+    package_manager: str,
 ) -> List[str]:
     filter_label = FILTER_LABELS.get(filter_mode, filter_mode.title())
     lines = [
-        "↑/k: up    ↓/j: down    f: favourite    s: filter    q: quit    1/2/3: switch screen",
+        "↑/k: up    ↓/j: down    f: favourite    s: filter    q: quit    1/2/3/4: switch screen",
         f"Filter: {filter_label}    Legend: * favourite    [WAYLAND|X11] session type",
+        f"Package manager: {package_manager_label(package_manager)}",
     ]
     if active_screen == "detected":
         lines.append("Enter: launch selected desktop    d: refresh detection status")
@@ -853,10 +984,12 @@ def format_help_lines(
             "Enter: open desktop menu (install & extras)    u: uninstall via menu    d: refresh detection status"
         )
         if selected_entry:
-            if not is_installed and selected_entry.install_command:
-                lines.append(f"Install command: {selected_entry.install_command}")
-            if is_installed and selected_entry.uninstall_command:
-                lines.append(f"Uninstall command: {selected_entry.uninstall_command}")
+            install_cmd = resolve_command(selected_entry.install_command, package_manager)
+            uninstall_cmd = resolve_command(selected_entry.uninstall_command, package_manager)
+            if not is_installed and install_cmd:
+                lines.append(f"Install command: {install_cmd}")
+            if is_installed and uninstall_cmd:
+                lines.append(f"Uninstall command: {uninstall_cmd}")
     else:
         lines.append("Enter: launch selected desktop")
     lines.append(f"Config: {config_path}")
@@ -1070,8 +1203,25 @@ def curses_main(
     }
     active_screen = "configured"
     filter_mode = "all"
+    options_cursor = 0
 
     while True:
+        effective_pm = package_state.get("effective") or DEFAULT_PACKAGE_MANAGER
+
+        if active_screen == "options":
+            next_screen, options_cursor = options_screen(
+                stdscr,
+                config_path,
+                package_state,
+                save_package_state,
+                options_cursor,
+            )
+            if next_screen == "exit":
+                return LauncherResult(kind="exit")
+            if next_screen in SCREEN_SEQUENCE:
+                active_screen = next_screen
+            continue
+
         state = screen_state[active_screen]
         selected_idx = int(state.get("selected_idx") or 0)
         top_row = int(state.get("top_row") or 0)
@@ -1079,8 +1229,7 @@ def curses_main(
         retain_offset = state.get("retain_offset")
 
         if active_screen == "configured":
-            build_fn = build_configured_rows
-            rows, flat_entries, selectable_indices = build_fn(
+            rows, flat_entries, selectable_indices = build_configured_rows(
                 desktops, favourites, filter_mode
             )
         elif active_screen == "detected":
@@ -1089,7 +1238,7 @@ def curses_main(
             )
         else:  # install
             rows, flat_entries, selectable_indices = build_install_rows(
-                desktops, favourites, filter_mode, detection_map
+                desktops, favourites, filter_mode, detection_map, effective_pm
             )
 
         if anchor_name and flat_entries:
@@ -1129,6 +1278,7 @@ def curses_main(
             active_screen,
             selected_entry,
             is_installed,
+            effective_pm,
         )
         for i, line in enumerate(help_lines, start=height - len(help_lines)):
             if 0 <= i < height:
@@ -1219,17 +1369,33 @@ def curses_main(
             entry = flat_entries[selected_idx]
             if active_screen == "install":
                 entry_installed = detection_map.get(entry.name, False)
-                state["retain_offset"] = selected_row_index - top_row if selected_row_index is not None else None
+                state["retain_offset"] = (
+                    selected_row_index - top_row if selected_row_index is not None else None
+                )
                 state["anchor_name"] = entry.name
                 if entry_installed and entry.uninstall_command:
-                    confirmed, extras = action_detail_menu(stdscr, entry, "uninstall")
+                    confirmed, primary, extras = action_detail_menu(
+                        stdscr, entry, "uninstall", effective_pm
+                    )
                     if confirmed:
-                        return LauncherResult(kind="uninstall", entry=entry, extras=extras)
+                        return LauncherResult(
+                            kind="uninstall",
+                            entry=entry,
+                            primary_command=primary,
+                            extras=extras,
+                        )
                     continue
                 if not entry_installed and entry.install_command:
-                    confirmed, extras = action_detail_menu(stdscr, entry, "install")
+                    confirmed, primary, extras = action_detail_menu(
+                        stdscr, entry, "install", effective_pm
+                    )
                     if confirmed:
-                        return LauncherResult(kind="install", entry=entry, extras=extras)
+                        return LauncherResult(
+                            kind="install",
+                            entry=entry,
+                            primary_command=primary,
+                            extras=extras,
+                        )
                 continue
             else:
                 return LauncherResult(kind="launch", entry=entry)
@@ -1247,11 +1413,20 @@ def curses_main(
         elif key in (ord("u"), ord("U")) and flat_entries and active_screen == "install":
             entry = flat_entries[selected_idx]
             if detection_map.get(entry.name, False) and entry.uninstall_command:
-                state["retain_offset"] = selected_row_index - top_row if selected_row_index is not None else None
+                state["retain_offset"] = (
+                    selected_row_index - top_row if selected_row_index is not None else None
+                )
                 state["anchor_name"] = entry.name
-                confirmed, extras = action_detail_menu(stdscr, entry, "uninstall")
+                confirmed, primary, extras = action_detail_menu(
+                    stdscr, entry, "uninstall", effective_pm
+                )
                 if confirmed:
-                    return LauncherResult(kind="uninstall", entry=entry, extras=extras)
+                    return LauncherResult(
+                        kind="uninstall",
+                        entry=entry,
+                        primary_command=primary,
+                        extras=extras,
+                    )
         elif key in (ord("s"), ord("S")):
             if flat_entries:
                 state["anchor_name"] = flat_entries[selected_idx].name
@@ -1275,6 +1450,8 @@ def curses_main(
                 if flat_entries:
                     state["anchor_name"] = flat_entries[selected_idx].name
                 active_screen = "install"
+        elif key in (ord("4"),):
+            active_screen = "options"
 
 
 def resolve_favourites_path() -> Path:
@@ -1360,7 +1537,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         return 0
 
     try:
-        desktops = load_config(config_path)
+        desktops, raw_config = load_config(config_path)
     except ConfigError as error:
         print(f"desktop: {error}", file=sys.stderr)
         return 1
@@ -1368,6 +1545,45 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     if not desktops:
         print(f"desktop: No desktops configured in {config_path}", file=sys.stderr)
         return 1
+
+    config_data = raw_config if isinstance(raw_config, dict) else {}
+    if not isinstance(config_data, dict):
+        config_data = {}
+
+    options_section = {}
+    if isinstance(config_data.get("options"), dict):
+        options_section = config_data["options"]
+
+    override_value = options_section.get("package_manager_override")
+    if isinstance(override_value, str) and override_value.strip():
+        override = override_value.strip().lower()
+    else:
+        override = None
+
+    detected_manager = detect_package_manager()
+    effective_manager = compute_effective_package_manager(detected_manager, override)
+
+    package_state: Dict[str, object] = {
+        "detected": detected_manager,
+        "override": override,
+        "effective": effective_manager,
+    }
+
+    def save_package_state() -> None:
+        options = config_data.setdefault("options", {})
+        if not isinstance(options, dict):
+            options = {}
+            config_data["options"] = options
+        if package_state.get("override"):
+            options["package_manager_override"] = package_state["override"]
+        else:
+            options.pop("package_manager_override", None)
+            if not options:
+                config_data.pop("options", None)
+        try:
+            save_config(config_path, config_data)
+        except OSError as error:
+            print(f"desktop: Failed to write config: {error}", file=sys.stderr)
 
     favourites_path = resolve_favourites_path()
     initial_favourites = load_favourites(favourites_path)
@@ -1381,7 +1597,13 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     while True:
         try:
             result = curses.wrapper(
-                curses_main, desktops, config_path, favourites, detection_map
+                curses_main,
+                desktops,
+                config_path,
+                favourites,
+                detection_map,
+                package_state,
+                save_package_state,
             )
         except curses.error as error:
             print(f"desktop: Failed to initialize curses UI: {error}", file=sys.stderr)
@@ -1395,7 +1617,12 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             entry = result.entry
             if not entry:
                 continue
-            perform_entry_action(entry, result.kind, result.extras)
+            perform_entry_action(
+                entry,
+                result.kind,
+                result.primary_command,
+                result.extras,
+            )
             detection_map = detect_desktops(desktops)
             continue
 
