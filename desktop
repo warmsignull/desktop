@@ -861,7 +861,7 @@ def options_screen(
         stdscr.addstr(4, 0, f"Effective: {effective_label}"[:width])
 
         instructions = (
-            "Enter: set override    r: re-detect    q: quit    1/2/3/4: switch screen"
+            "Enter: set override    r: re-detect    q: quit    ←/h or →/l / 1/2/3/4: switch screen"
         )
         stdscr.addstr(6, 0, instructions[:width], curses.A_DIM)
         stdscr.addstr(7, 0, f"Config: {config_path}"[:width], curses.A_DIM)
@@ -891,10 +891,16 @@ def options_screen(
 
         key = stdscr.getch()
 
-        if key in (ord("q"), ord("Q")):
+        if key in (ord("q"), ord("Q"), 27):
             return "exit", cursor
-        if key == 27:
-            return "exit", cursor
+        if key in (curses.KEY_LEFT, ord("h"), ord("H")):
+            idx = SCREEN_SEQUENCE.index("options")
+            target = SCREEN_SEQUENCE[(idx - 1) % len(SCREEN_SEQUENCE)]
+            return target, cursor
+        if key in (curses.KEY_RIGHT, ord("l"), ord("L")):
+            idx = SCREEN_SEQUENCE.index("options")
+            target = SCREEN_SEQUENCE[(idx + 1) % len(SCREEN_SEQUENCE)]
+            return target, cursor
         if key in (ord("1"), ord("2"), ord("3"), ord("4")):
             target = SCREEN_SEQUENCE[int(chr(key)) - 1]
             return target, cursor
@@ -973,7 +979,7 @@ def format_help_lines(
 ) -> List[str]:
     filter_label = FILTER_LABELS.get(filter_mode, filter_mode.title())
     lines = [
-        "↑/k: up    ↓/j: down    f: favourite    s: filter    q: quit    1/2/3/4: switch screen",
+        "↑/k: up    ↓/j: down    ←/h: prev screen    →/l: next screen    f: favourite    s: filter    q: quit    1/2/3/4: switch screen",
         f"Filter: {filter_label}    Legend: * favourite    [WAYLAND|X11] session type",
         f"Package manager: {package_manager_label(package_manager)}",
     ]
@@ -1435,23 +1441,38 @@ def curses_main(
                 screen_state[screen]["top_row"] = 0
         elif key in (ord("d"), ord("D")):
             detection_map.update(detect_desktops(desktops))
-        elif key in (ord("1"),):
-            if active_screen != "configured":
-                if flat_entries:
+        elif key in (
+            curses.KEY_LEFT,
+            ord("h"),
+            ord("H"),
+            ord("1"),
+            ord("2"),
+            ord("3"),
+            ord("4"),
+            curses.KEY_RIGHT,
+            ord("l"),
+            ord("L"),
+        ):
+            def switch_to(target: str) -> None:
+                nonlocal active_screen
+                if target not in SCREEN_SEQUENCE or target == active_screen:
+                    return
+                if active_screen != "options" and flat_entries:
                     state["anchor_name"] = flat_entries[selected_idx].name
-                active_screen = "configured"
-        elif key in (ord("2"),):
-            if active_screen != "detected":
-                if flat_entries:
-                    state["anchor_name"] = flat_entries[selected_idx].name
-                active_screen = "detected"
-        elif key in (ord("3"),):
-            if active_screen != "install":
-                if flat_entries:
-                    state["anchor_name"] = flat_entries[selected_idx].name
-                active_screen = "install"
-        elif key in (ord("4"),):
-            active_screen = "options"
+                active_screen = target
+
+            if key in (curses.KEY_LEFT, ord("h"), ord("H")):
+                idx = SCREEN_SEQUENCE.index(active_screen)
+                target = SCREEN_SEQUENCE[(idx - 1) % len(SCREEN_SEQUENCE)]
+                switch_to(target)
+            elif key in (curses.KEY_RIGHT, ord("l"), ord("L")):
+                idx = SCREEN_SEQUENCE.index(active_screen)
+                target = SCREEN_SEQUENCE[(idx + 1) % len(SCREEN_SEQUENCE)]
+                switch_to(target)
+            else:
+                target_index = int(chr(key)) - 1
+                if 0 <= target_index < len(SCREEN_SEQUENCE):
+                    switch_to(SCREEN_SEQUENCE[target_index])
 
 
 def resolve_favourites_path() -> Path:
