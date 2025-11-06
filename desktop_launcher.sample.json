@@ -184,7 +184,7 @@
     },
     {
       "name": "Sway",
-      "command": "sway",
+      "command": "sway --unsupported-gpu",
       "session_type": "wayland",
       "detect_commands": ["sway"],
       "install_command": "sudo pacman -S --needed sway",
