@@ -138,3 +138,20 @@ When a desktop is launched the script executes the associated command via the
 user's shell, replacing the launcher process. After installing or uninstalling
 you can opt into extra helper commands; the launcher then prompts you to press
 Enter, refreshes detection results, and returns to the UI.
+
+## Development
+
+Create an isolated environment with the provided Makefile:
+
+```bash
+make venv                 # creates .venv
+make venv PIP_UPGRADE=1   # same as above but upgrades pip inside the venv
+make deps        # installs dev requirements (optional, empty by default)
+```
+
+Activate the environment (`source .venv/bin/activate`) or run project commands
+through `make`. For example, run the unit suite with:
+
+```bash
+make test
+```
