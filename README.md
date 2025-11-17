@@ -5,6 +5,15 @@ lets you mark favourites, launches the selected session, detects installed
 environments, and can run install/uninstall commands (including optional
 extras) using your package manager override. Tested so far on Arch Linux.
 
+## Features
+
+- Terminal UI with dedicated Configured, Detect, Install, and Options screens.
+- Config-driven entries that can target X11 or Wayland sessions and include optional descriptions.
+- Session filter (`All`, `X11`, `Wayland`) plus persistent favourites per user.
+- Auto-detection of installed desktops via `detect_commands`, with one-tap refresh.
+- Install/uninstall workflows with optional follow-up extras and package-manager-aware commands.
+- Automatic package manager detection with an Options screen to apply overrides.
+
 ## Configuration
 
 1. Place a JSON file at `/etc/desktop_launcher.json` (or point
@@ -120,6 +129,10 @@ an explicit choice. You can manage the same setting through the Options screen.
 3. Adjust permissions so all users that should launch desktops can read the
    config and execute the script.
 
+> **Note:** Desktop Launcher never installs the system Wayland stack for you
+> (no implicit `pacman -S wayland`). Install Wayland or Xorg packages through
+> your normal package management steps before using the launcher.
+
 ### Runtime flags
 
 - `desktop --config /path/to/config.json` – override the config file path.
@@ -146,8 +159,9 @@ Key bindings:
 - `s`: Cycle the session filter (`All → X11 → Wayland`).
 - `d`: Refresh detection results.
 - `r`: Re-run package manager detection (Options screen).
+- `←`/`→` or `h`/`l`: Switch between Configured, Detect, Install, and Options.
 - `1`, `2`, `3`, `4`: Jump between the Configured, Detect, Install, and Options screens.
-- `q`: Quit the launcher (the terminal is cleared on exit).
+- `q` or `Esc`: Quit the launcher (the terminal is cleared on exit).
 
 When a desktop is launched the script executes the associated command via the
 user's shell, replacing the launcher process. After installing or uninstalling
